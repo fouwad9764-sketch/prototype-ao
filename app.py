@@ -173,7 +173,8 @@ if st.session_state.fiche_flash:
     if st.button("Analyser le go/no-go", disabled=not PROFIL):
         with st.spinner("Analyse en cours…"):
             st.session_state.go_no_go = lancer(P2_GO_NO_GO.format(
-                fiche_flash=st.session_state.fiche_flash, fiche_client=PROFIL))
+                fiche_flash=st.session_state.fiche_flash, fiche_client=PROFIL,
+                date_du_jour=datetime.now().strftime("%d/%m/%Y")))
     if not PROFIL:
         st.caption("Renseigne d'abord le profil du client (étape 3).")
     if st.session_state.go_no_go:

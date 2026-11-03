@@ -32,6 +32,7 @@ PIÈCES :
 
 P2_GO_NO_GO = """Rôle : analyste chargé de protéger le temps de l'équipe. Tu cherches les
 raisons de NE PAS répondre autant que celles de répondre.
+Date du jour : {date_du_jour}. Calcule les délais restants à partir de cette date.
 
 # Analyse go/no-go
 
@@ -51,7 +52,10 @@ Tableau | Critère | Note /5 | Justification (une ligne) | avec :
 ## Recommandation
 GO / NO-GO / À ARBITRER, puis les deux faits qui inverseraient la décision.
 
-Règles : ne te fonde que sur la fiche client fournie. Si une information manque dans la fiche
+Règles : ne te fonde que sur la fiche client fournie.
+Ne déclare « manquante » qu'une capacité que le DCE exige explicitement : vérifie le texte exact
+de l'exigence (ex. un CACES nacelle R486 couvre les nacelles ; un CACES grue n'est manquant
+que si le DCE exige une grue). Distingue ce qui est obligatoire de ce qui est seulement utile. Si une information manque dans la fiche
 client, note-la « à demander au client » au lieu de supposer. La décision finale reste humaine.
 
 FICHE FLASH DU MARCHÉ :
@@ -118,7 +122,8 @@ Règles :
   limitée à ce que le DCE demande (pièce à obtenir, déclaration à faire signer, formation,
   cotraitance, sous-traitance autorisée, renoncer). Ne demande pas de documents que le DCE
   n'exige pas. Pour CONFORME et SANS OBJET, écris « — ».
-- N'invente aucune capacité, aucun chiffre, aucun document du client.
+- N'invente aucune capacité, aucun chiffre, aucun document, aucune coordonnée du client
+  (adresse e-mail, téléphone, SIRET…) : si l'élément n'est pas écrit dans le dossier, il manque.
 - Pas de texte avant ni après le tableau.
 
 EXIGENCES DU POUVOIR ADJUDICATEUR :
