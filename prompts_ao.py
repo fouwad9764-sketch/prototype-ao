@@ -64,12 +64,24 @@ FICHE CLIENT :
 P3_EXIGENCES = """Rôle : juriste de la commande publique.
 Pièce analysée : {nom_piece} (type présumé : {type_piece}){partie}.
 
-Liste TOUTES les exigences de cet extrait (administratives, techniques, financières,
-environnementales, sociales). Une ligne par obligation, ne résume pas.
+Liste les OBLIGATIONS qui s'imposent au candidat dans cet extrait : pièces à fournir,
+capacités à démontrer (chiffre d'affaires, références, habilitations, certifications,
+moyens, assurances), règles de forme et de dépôt, engagements d'exécution.
 
-Tableau | Exigence reformulée | Source (pièce, article/page) | Obligatoire / souhaitée / optionnelle | Preuve attendue | Ambiguïté |
+Ne liste PAS : les simples informations sur la procédure (nombre de titulaires, codes CPV,
+montant du marché, déroulé des phases), ni ce qui ne concerne que l'acheteur.
 
-Si l'extrait ne contient aucune exigence, réponds seulement : « Aucune exigence dans cet extrait. »
+Règles de découpage :
+- Une ligne par obligation. Une capacité distincte = une ligne distincte (ex. habilitation
+  B1V, habilitation TST et CACES nacelle = trois lignes).
+- Un modèle de déclaration sur l'honneur à signer = UNE seule ligne (« Signer la déclaration
+  sur l'honneur de l'annexe X »), pas une ligne par cas d'exclusion.
+- Pas de doublon : une même obligation répétée dans l'extrait n'apparaît qu'une fois.
+
+Tableau | Exigence reformulée | Source (nom exact de la pièce, article/page) | Obligatoire / souhaitée / optionnelle | Preuve attendue | Ambiguïté |
+
+Si l'extrait ne contient aucune obligation pour le candidat, réponds seulement :
+« Aucune exigence dans cet extrait. »
 
 EXTRAIT :
 {texte}
@@ -87,17 +99,26 @@ Règles :
 - Une ligne par exigence de la liste, dans le même ordre, avec le même numéro. N'en omets
   aucune, n'en ajoute aucune, ne fusionne pas de lignes.
 - Recopie l'exigence et sa source telles quelles (tu peux raccourcir l'exigence).
-- Statut : uniquement CONFORME, PARTIEL, NON CONFORME ou À VÉRIFIER.
-  - CONFORME : uniquement si le dossier du client contient l'élément de preuve.
-  - PARTIEL : le client répond en partie (ex. habilitation détenue par trop peu de personnes).
-  - NON CONFORME : le dossier montre que le client ne remplit pas l'exigence.
-  - À VÉRIFIER : l'information est absente du dossier du client, ou c'est une déclaration
-    que le client doit signer.
-- Preuve : nom du document du client (ou « fiche client ») et l'élément précis. Sinon « aucune ».
-- Écart et action : pour tout statut autre que CONFORME, une action concrète (pièce à demander
-  au client, formation, cotraitance, sous-traitance autorisée, renoncer à ce marché…).
-  Pour CONFORME, écris « — ».
-- N'invente aucune capacité, aucun chiffre, aucune certification du client.
+- Statut : uniquement CONFORME, PARTIEL, NON CONFORME, À VÉRIFIER ou SANS OBJET.
+  - CONFORME : uniquement si le dossier du client contient EXPLICITEMENT l'élément de preuve.
+    Dans la colonne Preuve, cite cet élément (ex. « fiche client : B1V pour 11 électriciens »).
+    Une simple intention, une pratique supposée ou un engagement futur ne sont pas des preuves.
+  - PARTIEL : le client répond en partie (ex. capacité insuffisante, une habilitation sur deux).
+  - NON CONFORME : le dossier montre que le client ne remplit pas l'exigence
+    (ex. « aucune habilitation TST » face à une exigence TST).
+  - À VÉRIFIER : l'information est absente du dossier, ou c'est une déclaration ou un
+    engagement que le client doit signer, ou une règle de dépôt à respecter le moment venu.
+  - SANS OBJET : simple information sur la procédure, ou exigence qui ne concerne pas un
+    candidat seul (ex. règles de groupement pour une candidature individuelle), ou doublon
+    d'une exigence déjà listée (écris alors « doublon du n° X »).
+- Compare les chiffres : un chiffre d'affaires inférieur à un seuil exigé est NON CONFORME ;
+  en l'absence de seuil, ne conclus pas.
+- Preuve : élément précis du dossier du client, sinon « aucune ».
+- Écart et action : pour tout statut autre que CONFORME et SANS OBJET, une action concrète
+  limitée à ce que le DCE demande (pièce à obtenir, déclaration à faire signer, formation,
+  cotraitance, sous-traitance autorisée, renoncer). Ne demande pas de documents que le DCE
+  n'exige pas. Pour CONFORME et SANS OBJET, écris « — ».
+- N'invente aucune capacité, aucun chiffre, aucun document du client.
 - Pas de texte avant ni après le tableau.
 
 EXIGENCES DU POUVOIR ADJUDICATEUR :

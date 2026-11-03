@@ -24,6 +24,12 @@ SYSTEM_PROMPT = (
 )
 
 
+def nettoyer(texte: str) -> str:
+    """Retire les balises ``` que le modèle ajoute parfois autour de sa réponse."""
+    lignes = [l for l in texte.strip().splitlines() if not l.strip().startswith("```")]
+    return "\n".join(lignes).strip()
+
+
 class LLMError(Exception):
     """Erreur lisible renvoyée à l'interface."""
 
@@ -54,7 +60,7 @@ def appeler_ia(prompt: str, api_key: str, model: str = "mistral-large-latest",
             continue
 
         if rep.status_code == 200:
-            return rep.json()["choices"][0]["message"]["content"]
+            return nettoyer(rep.json()["choices"][0]["message"]["content"])
         if rep.status_code == 401:
             raise LLMError("Clé API refusée par Mistral. Vérifie la clé dans Manage app > "
                            "Settings > Secrets (une seule ligne, sans espace). "

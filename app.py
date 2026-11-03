@@ -243,10 +243,11 @@ if st.session_state.exigences:
     matrice = st.session_state.matrice
     if matrice:
         comptes = compter(matrice)
-        colonnes = st.columns(4)
+        colonnes = st.columns(len(comptes))
         for col, (statut, nombre) in zip(colonnes, comptes.items()):
             col.metric(statut.capitalize(), nombre)
-        filtre = st.multiselect("Afficher les statuts", list(comptes), default=list(comptes))
+        filtre = st.multiselect("Afficher les statuts", list(comptes),
+                                default=[s for s in comptes if s != "SANS OBJET"])
         st.dataframe([l for l in matrice if l["Statut"] in filtre], column_order=COLONNES_MATRICE,
                      use_container_width=True, hide_index=True)
         nom_client = (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]

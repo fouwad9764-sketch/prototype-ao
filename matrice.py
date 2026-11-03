@@ -6,8 +6,8 @@ import re
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-STATUTS = ["CONFORME", "PARTIEL", "NON CONFORME", "À VÉRIFIER"]
-COULEURS = {"CONFORME": "C6EFCE", "PARTIEL": "FFEB9C", "NON CONFORME": "FFC7CE", "À VÉRIFIER": "DDEBF7"}
+STATUTS = ["CONFORME", "PARTIEL", "NON CONFORME", "À VÉRIFIER", "SANS OBJET"]
+COULEURS = {"CONFORME": "C6EFCE", "PARTIEL": "FFEB9C", "NON CONFORME": "FFC7CE", "À VÉRIFIER": "DDEBF7", "SANS OBJET": "EDEDED"}
 COLONNES_MATRICE = ["N°", "Exigence", "Source DCE", "Ce que le client apporte", "Statut",
                     "Preuve (document client)", "Écart et action"]
 
@@ -42,6 +42,8 @@ def normaliser_statut(texte: str) -> str:
     t = texte.upper().replace("**", "").strip()
     if "NON" in t and "CONFORME" in t:
         return "NON CONFORME"
+    if "SANS OBJET" in t or "DOUBLON" in t:
+        return "SANS OBJET"
     if "PARTIEL" in t:
         return "PARTIEL"
     if "VÉRIFIER" in t or "VERIFIER" in t:
@@ -58,6 +60,13 @@ def lignes_matrice(markdown: str) -> list:
         cellules = (cellules + [""] * len(COLONNES_MATRICE))[:len(COLONNES_MATRICE)]
         ligne = dict(zip(COLONNES_MATRICE, cellules))
         ligne["Statut"] = normaliser_statut(ligne["Statut"])
+        preuve = ligne["Preuve (document client)"].lower().replace("*", "").strip(" .-")
+        if ligne["Statut"] == "CONFORME" and (not preuve or preuve.startswith("aucun")
+                                              or "à signer" in preuve or "a signer" in preuve):
+            # garde-fou : pas de « conforme » sans preuve
+            ligne["Statut"] = "À VÉRIFIER"
+            ligne["Écart et action"] = ("Statut corrigé automatiquement : aucune preuve citée. "
+                                        + ligne["Écart et action"].strip(" —-"))
         lignes.append(ligne)
     return lignes
 
