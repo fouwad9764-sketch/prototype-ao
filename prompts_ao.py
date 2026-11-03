@@ -171,7 +171,12 @@ Règles :
 - Supprime les lignes de titre de section.
 - Garde séparées les capacités techniques distinctes (ex. B1V, TST, CACES nacelle,
   travaux en hauteur = lignes distinctes) : ce sont elles qui décident du go/no-go.
-- Phase : Candidature, Offre, Dépôt ou Exécution.
+- Garde aussi les exigences de capacité opérationnelle (autonomie, nombre d'équipes,
+  délai d'intervention, volume à traiter, moyens matériels) et classe-les en Candidature :
+  l'acheteur les juge dès la sélection des candidats.
+- Fusionne les formulaires qui se recoupent (ex. « lettre de candidature DC1 » et
+  « formulaires DC1 et DC2 » = une seule ligne « Remplir les formulaires DC1 et DC2 ou le DUME »).
+- Phase : un seul mot parmi Candidature, Offre, Dépôt ou Exécution.
 - Caractère : Obligatoire, Si applicable ou Souhaitée.
 - Vise entre 15 et 40 lignes. Ne crée aucune exigence absente de la liste brute.
 - Pas de texte avant ni après le tableau.

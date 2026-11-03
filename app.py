@@ -23,7 +23,7 @@ from matrice import (COLONNES_MATRICE, compter, lignes_de_tableaux, lignes_matri
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE)
 
-VERSION = "v6 (03/11/2026)"
+VERSION = "v7 (03/11/2026)"
 
 load_dotenv()
 
@@ -234,11 +234,12 @@ if pieces:
 if st.session_state.exigences:
     st.subheader("6. Matrice de conformité : exigences face aux capacités du client (P4)")
     toutes = lignes_de_tableaux(st.session_state.exigences)
-    phases = sorted({c[2].strip() for c in toutes if len(c) > 2 and c[2].strip()})
-    if phases:
+    phases = ["Candidature", "Dépôt", "Offre", "Exécution"]
+    if any(len(c) > 2 and c[2].strip() for c in toutes):
         retenues = st.multiselect("Phases à inclure dans la matrice", phases,
-                                  default=[p for p in phases if p.lower() in ("candidature", "dépôt")] or phases)
-        exigences_lignes = [c for c in toutes if len(c) < 3 or c[2].strip() in retenues]
+                                  default=["Candidature", "Dépôt"])
+        exigences_lignes = [c for c in toutes if len(c) < 3 or not c[2].strip()
+                            or any(p.lower() in c[2].lower() for p in retenues)]
     else:
         exigences_lignes = toutes
     st.caption(f"{len(exigences_lignes)} exigences retenues sur {len(toutes)}. Chaque statut reste à valider.")
