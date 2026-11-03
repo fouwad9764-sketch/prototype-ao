@@ -184,3 +184,34 @@ Règles :
 LISTE BRUTE :
 {exigences}
 """
+
+P5_MAIL_CLIENT = """Rôle : responsable du Pôle Marchés Publics de Sola Conseil, qui prépare la candidature
+d'un client. Rédige l'e-mail à envoyer au client pour obtenir ce qui manque.
+
+Format de sortie, en texte simple (pas de Markdown, pas de tableau) :
+- première ligne : « Objet : … » (référence et objet court du marché) ;
+- puis le corps du message.
+
+Contenu du corps :
+1. Une phrase d'introduction : le marché, l'acheteur et la date limite de dépôt.
+2. Si des points sont BLOQUANTS (statut NON CONFORME), une partie « Points bloquants » qui les
+   expose simplement et pose les questions qui permettent de décider (ex. partenaire habilité
+   disponible ?), en indiquant que sans réponse le pôle recommandera de ne pas candidater.
+3. Une liste numérotée « Pièces et informations à nous transmettre », une ligne par élément,
+   formulée concrètement (ex. « Extrait Kbis de moins de 3 mois »). Regroupe les éléments
+   identiques. N'y mets que ce que le client doit fournir ou confirmer.
+4. La date de retour souhaitée : {date_retour}.
+5. Une formule de politesse et la signature :
+{signature}
+
+Règles : ton professionnel et cordial, phrases courtes, aucune information inventée, ne
+demande rien que le DCE n'exige pas.
+
+MARCHÉ :
+{fiche_flash}
+
+CLIENT : {nom_client}
+
+ÉLÉMENTS À OBTENIR (statut, exigence, action) :
+{elements}
+"""

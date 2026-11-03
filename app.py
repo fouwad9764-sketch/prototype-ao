@@ -11,19 +11,20 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import export_word, extraction, llm_client, matrice, prompts_ao
-for _module in (export_word, extraction, llm_client, matrice, prompts_ao):
+import export_word, extraction, llm_client, mail_client, matrice, prompts_ao
+for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
 from export_word import markdown_vers_docx
 from extraction import decouper, deviner_type, lire_fichier
 from llm_client import LLMError, appeler_ia, cle_depuis_env
-from matrice import (COLONNES_MATRICE, compter, lignes_de_tableaux, lignes_matrice,
-                     vers_excel, vers_markdown)
+from mail_client import envoyer, lien_mailto, separer_objet, smtp_configure
+from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_checklist,
+                     lignes_de_tableaux, lignes_matrice, vers_excel, vers_markdown)
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
-                        P3B_CONSOLIDATION, P4_MATRICE)
+                        P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT)
 
-VERSION = "v7 (03/11/2026)"
+VERSION = "v8 (03/11/2026)"
 
 load_dotenv()
 
@@ -79,7 +80,8 @@ with st.sidebar:
 st.title("Analyse de DCE")
 st.caption("Prototype Pôle Marchés Publics — Sola Conseil. Toute sortie est un brouillon à vérifier.")
 
-for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "docs_client", "matrice"):
+for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "docs_client", "matrice",
+          "checklist", "mail_brouillon", "journal_mails"):
     st.session_state.setdefault(k, None)
 
 # ---------- 1. Import ----------
@@ -263,6 +265,8 @@ if st.session_state.exigences:
         barre.progress(1.0, text="Terminé")
         if sorties:
             st.session_state.matrice = lignes_matrice("\n\n".join(sorties))
+            st.session_state.checklist = None
+            st.session_state.mail_brouillon = None
             if len(st.session_state.matrice) != len(exigences_lignes):
                 st.warning(f"{len(st.session_state.matrice)} lignes produites pour "
                            f"{len(exigences_lignes)} exigences : vérifie qu'aucune n'a été oubliée.")
@@ -284,14 +288,83 @@ if st.session_state.exigences:
                            file_name=f"matrice_conformite_{datetime.now():%Y%m%d_%H%M}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ---------- 7. Export ----------
+# ---------- 7. Dossier de candidature : check-list et e-mail au client ----------
+CONFIG_MAIL = {k: secret(k) for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
+                                       "EXPEDITEUR", "NOM_EXPEDITEUR", "SIGNATURE")}
+if st.session_state.matrice:
+    st.subheader("7. Dossier de candidature : check-list et e-mail au client")
+    nom_client = (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]
+
+    if st.session_state.checklist is None:
+        st.session_state.checklist = lignes_checklist(st.session_state.matrice)
+    st.caption("Coche au fur et à mesure. « Bloquant » = à régler avant de décider de candidater.")
+    edite = st.data_editor(st.session_state.checklist, key="editeur_checklist", hide_index=True,
+                           use_container_width=True, disabled=["Priorité", "Exigence", "Statut", "Source DCE"],
+                           column_config={"Fait": st.column_config.CheckboxColumn("Fait"),
+                                          "Qui": st.column_config.SelectboxColumn(
+                                              "Qui", options=["Client", "Sola Conseil"])})
+    st.session_state.checklist = edite
+    faits = sum(1 for l in edite if l["Fait"])
+    st.progress(faits / max(len(edite), 1), text=f"{faits} / {len(edite)} éléments traités")
+    st.download_button("Télécharger la check-list en Excel",
+                       data=checklist_vers_excel(edite, f"Check-list de candidature : {nom_client}"),
+                       file_name=f"checklist_candidature_{datetime.now():%Y%m%d_%H%M}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    st.markdown("**E-mail au client : pièces et informations à transmettre**")
+    a_obtenir = [l for l in edite if not l["Fait"] and l["Statut"] != "CONFORME"
+                 and (l["Qui"] == "Client" or l["Statut"] == "NON CONFORME")]
+    col1, col2 = st.columns(2)
+    email_client = col1.text_input("E-mail du client")
+    date_retour = col2.date_input("Date de retour souhaitée", format="DD/MM/YYYY")
+    signature = CONFIG_MAIL["SIGNATURE"] or st.text_input(
+        "Signature", value="Responsable Pôle Marchés Publics\nSola Conseil")
+    if st.button(f"Rédiger l'e-mail ({len(a_obtenir)} éléments à demander)", disabled=not a_obtenir):
+        elements = "\n".join(f"- [{l['Statut']}] {l['Exigence']} → {l['Action']}" for l in a_obtenir)
+        with st.spinner("Rédaction…"):
+            texte = lancer(P5_MAIL_CLIENT.format(
+                date_retour=date_retour.strftime("%d/%m/%Y"), signature=signature,
+                fiche_flash=st.session_state.fiche_flash or "", nom_client=nom_client, elements=elements))
+        if texte:
+            st.session_state.mail_brouillon = separer_objet(texte)
+
+    if st.session_state.mail_brouillon:
+        objet = st.text_input("Objet", value=st.session_state.mail_brouillon[0])
+        corps = st.text_area("Message (modifiable)", value=st.session_state.mail_brouillon[1], height=320)
+        responsable = CONFIG_MAIL["EXPEDITEUR"]
+        copie = responsable if responsable and st.checkbox("Mettre le responsable du pôle en copie", value=True) else ""
+        if email_client:
+            st.link_button("Ouvrir dans l'app Mail", lien_mailto(email_client, objet, corps, copie))
+        if smtp_configure(CONFIG_MAIL):
+            relu = st.checkbox("J'ai relu l'e-mail et je confirme l'envoi au client")
+            joindre = st.checkbox("Joindre la check-list Excel", value=True)
+            if st.button("Envoyer maintenant depuis la boîte du pôle", type="primary",
+                         disabled=not (relu and email_client and "@" in email_client)):
+                pj = [("checklist_candidature.xlsx", checklist_vers_excel(edite, f"Check-list : {nom_client}"),
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] if joindre else []
+                try:
+                    envoyer(CONFIG_MAIL, email_client, objet, corps, copie, pj)
+                    journal = st.session_state.journal_mails or []
+                    journal.append({"Date": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                                    "À": email_client, "Objet": objet})
+                    st.session_state.journal_mails = journal
+                    st.success(f"E-mail envoyé à {email_client}" + (f" (copie : {copie})" if copie else "") + ".")
+                except Exception as exc:
+                    st.error(f"Envoi impossible : {exc}. Vérifie les réglages SMTP dans les Secrets.")
+        else:
+            st.caption("Envoi direct non configuré : utilise « Ouvrir dans l'app Mail », ou ajoute les "
+                       "réglages SMTP de la boîte du pôle dans les Secrets.")
+        if st.session_state.journal_mails:
+            st.dataframe(st.session_state.journal_mails, hide_index=True, use_container_width=True)
+
+# ---------- 8. Export ----------
 sections = [(t, st.session_state[k]) for t, k in [
     ("Fiche flash", "fiche_flash"), ("Analyse go/no-go", "go_no_go"),
     ("Liste des exigences", "exigences")] if st.session_state[k]]
 if st.session_state.matrice:
     sections.append(("Matrice de conformité", vers_markdown(st.session_state.matrice)))
 if sections:
-    st.subheader("7. Exporter")
+    st.subheader("8. Exporter")
     nom = f"analyse_dce_{datetime.now():%Y%m%d_%H%M}.docx"
     st.download_button("Télécharger en Word", data=markdown_vers_docx(sections, "Analyse du DCE"),
                        file_name=nom,

@@ -124,3 +124,49 @@ def vers_excel(lignes: list, nom_client: str) -> bytes:
     tampon = io.BytesIO()
     classeur.save(tampon)
     return tampon.getvalue()
+
+
+def lignes_checklist(lignes: list) -> list:
+    """Check-list de candidature : tout ce qui n'est pas « sans objet », par priorité."""
+    ordre = {"NON CONFORME": 0, "PARTIEL": 1, "À VÉRIFIER": 2, "CONFORME": 3}
+    resultat = []
+    for l in sorted((l for l in lignes if l["Statut"] != "SANS OBJET"), key=lambda l: ordre[l["Statut"]]):
+        action = l["Écart et action"].strip(" —-") or "Joindre la preuve au dossier"
+        resultat.append({
+            "Fait": False,
+            "Priorité": {"NON CONFORME": "Bloquant", "PARTIEL": "Haute", "À VÉRIFIER": "Normale",
+                         "CONFORME": "Basse"}[l["Statut"]],
+            "Exigence": l["Exigence"],
+            "Statut": l["Statut"],
+            "Action": action,
+            "Qui": ("Sola Conseil" if l["Statut"] == "À VÉRIFIER" and "client" not in action.lower()
+                    else "Client"),
+            "Source DCE": l["Source DCE"],
+        })
+    return resultat
+
+
+def checklist_vers_excel(lignes: list, titre: str) -> bytes:
+    classeur = Workbook()
+    feuille = classeur.active
+    feuille.title = "Check-list"
+    colonnes = ["Fait", "Priorité", "Exigence", "Statut", "Action", "Qui", "Source DCE"]
+    feuille.append([titre])
+    feuille["A1"].font = Font(bold=True, size=13)
+    feuille.append(colonnes)
+    for cell in feuille[2]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="44546A")
+    for l in lignes:
+        feuille.append(["Oui" if l["Fait"] else "Non"] + [l[c] for c in colonnes[1:]])
+        statut = feuille.cell(row=feuille.max_row, column=4)
+        statut.fill = PatternFill("solid", fgColor=COULEURS[l["Statut"]])
+    for col, largeur in zip("ABCDEFG", [8, 11, 45, 15, 50, 14, 30]):
+        feuille.column_dimensions[col].width = largeur
+    for row in feuille.iter_rows(min_row=3):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    feuille.freeze_panes = "A3"
+    tampon = io.BytesIO()
+    classeur.save(tampon)
+    return tampon.getvalue()
