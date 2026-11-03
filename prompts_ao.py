@@ -152,3 +152,30 @@ Zone d'intervention : toute l'île de Mayotte.
 Positionnement prix : prix moyens du marché local.
 Point faible connu : capacité limitée à 2 équipes simultanées.
 """
+
+P3B_CONSOLIDATION = """Rôle : chargé d'affaires qui prépare une check-list de candidature claire et courte.
+
+Tu reçois la liste BRUTE des exigences extraites pièce par pièce d'un DCE. Elle contient des
+doublons, des informations sans intérêt pour le candidat et des détails trop découpés.
+Produis la liste CONSOLIDÉE, dans UN SEUL tableau, avec exactement ces colonnes :
+
+| Exigence | Source (pièces et articles) | Phase | Caractère | Preuve attendue |
+
+Règles :
+- Fusionne les doublons en une seule ligne et regroupe leurs sources.
+- Une déclaration sur l'honneur et tous ses cas d'exclusion = UNE seule ligne
+  (« Signer la déclaration sur l'honneur de l'annexe X »).
+- Supprime ce qui n'est pas une obligation pour le candidat : informations sur la procédure
+  (nombre de titulaires, codes CPV, montant du marché, déroulé des phases, fonds
+  communautaires…), clauses qui ne concernent que l'acheteur, droit applicable, tribunal.
+- Supprime les lignes de titre de section.
+- Garde séparées les capacités techniques distinctes (ex. B1V, TST, CACES nacelle,
+  travaux en hauteur = lignes distinctes) : ce sont elles qui décident du go/no-go.
+- Phase : Candidature, Offre, Dépôt ou Exécution.
+- Caractère : Obligatoire, Si applicable ou Souhaitée.
+- Vise entre 15 et 40 lignes. Ne crée aucune exigence absente de la liste brute.
+- Pas de texte avant ni après le tableau.
+
+LISTE BRUTE :
+{exigences}
+"""

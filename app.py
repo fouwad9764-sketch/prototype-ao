@@ -6,8 +6,14 @@ Lancement : streamlit run app.py
 import os
 from datetime import datetime
 
+import importlib
+
 import streamlit as st
 from dotenv import load_dotenv
+
+import export_word, extraction, llm_client, matrice, prompts_ao
+for _module in (export_word, extraction, llm_client, matrice, prompts_ao):
+    importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
 from export_word import markdown_vers_docx
 from extraction import decouper, deviner_type, lire_fichier
@@ -15,7 +21,9 @@ from llm_client import LLMError, appeler_ia, cle_depuis_env
 from matrice import (COLONNES_MATRICE, compter, lignes_de_tableaux, lignes_matrice,
                      vers_excel, vers_markdown)
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
-                        P4_MATRICE)
+                        P3B_CONSOLIDATION, P4_MATRICE)
+
+VERSION = "v6 (03/11/2026)"
 
 load_dotenv()
 
@@ -51,6 +59,7 @@ if MOT_DE_PASSE and not st.session_state.get("connecte"):
 # ---------- Barre latérale : réglages ----------
 with st.sidebar:
     st.header("Réglages")
+    st.caption(f"Version de l'outil : {VERSION}")
     cle_enregistree = secret("MISTRAL_API_KEY") or cle_depuis_env()
     if cle_enregistree:
         cle = cle_enregistree
@@ -70,7 +79,7 @@ with st.sidebar:
 st.title("Analyse de DCE")
 st.caption("Prototype Pôle Marchés Publics — Sola Conseil. Toute sortie est un brouillon à vérifier.")
 
-for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "docs_client", "matrice"):
+for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "docs_client", "matrice"):
     st.session_state.setdefault(k, None)
 
 # ---------- 1. Import ----------
@@ -180,7 +189,7 @@ if st.session_state.fiche_flash:
     if st.session_state.go_no_go:
         st.markdown(st.session_state.go_no_go)
 
-# ---------- 4. Exigences ----------
+# ---------- 5. Exigences ----------
 if pieces:
     st.subheader("5. Liste des exigences (P3)")
     st.caption("Chaque pièce est analysée séparément, puis les résultats sont regroupés.")
@@ -205,16 +214,34 @@ if pieces:
             resultats.append(f"## {p.nom}{partie}\n\n{sortie}")
         barre.progress(1.0, text="Terminé")
         if resultats:
-            st.session_state.exigences = "\n\n".join(resultats)
+            brutes = [c for c in lignes_de_tableaux("\n\n".join(resultats))
+                      if len(c) > 1 and c[1].strip() and c[0].strip()]  # sans titres de section
+            st.session_state.exigences_brutes = brutes
+            st.session_state.matrice = None
+            liste = "\n".join(f"{i}. {c[0]} (source : {c[1]})" for i, c in enumerate(brutes, start=1))
+            with st.spinner(f"Regroupement de {len(brutes)} exigences brutes (doublons, informations)…"):
+                consolidee = lancer(P3B_CONSOLIDATION.format(exigences=liste))
+            st.session_state.exigences = consolidee or "\n\n".join(resultats)
     if st.session_state.exigences:
+        nb_final = len(lignes_de_tableaux(st.session_state.exigences))
+        if st.session_state.exigences_brutes:
+            st.success(f"{len(st.session_state.exigences_brutes)} exigences brutes regroupées en "
+                       f"{nb_final} exigences utiles.")
         with st.expander("Voir les exigences", expanded=True):
             st.markdown(st.session_state.exigences)
 
 # ---------- 6. Matrice de conformité ----------
 if st.session_state.exigences:
     st.subheader("6. Matrice de conformité : exigences face aux capacités du client (P4)")
-    exigences_lignes = lignes_de_tableaux(st.session_state.exigences)
-    st.caption(f"{len(exigences_lignes)} exigences repérées à l'étape 5. Chaque statut reste à valider.")
+    toutes = lignes_de_tableaux(st.session_state.exigences)
+    phases = sorted({c[2].strip() for c in toutes if len(c) > 2 and c[2].strip()})
+    if phases:
+        retenues = st.multiselect("Phases à inclure dans la matrice", phases,
+                                  default=[p for p in phases if p.lower() in ("candidature", "dépôt")] or phases)
+        exigences_lignes = [c for c in toutes if len(c) < 3 or c[2].strip() in retenues]
+    else:
+        exigences_lignes = toutes
+    st.caption(f"{len(exigences_lignes)} exigences retenues sur {len(toutes)}. Chaque statut reste à valider.")
     if st.button("Construire la matrice", disabled=not (PROFIL and exigences_lignes)):
         lots = [exigences_lignes[i:i + EXIGENCES_PAR_LOT]
                 for i in range(0, len(exigences_lignes), EXIGENCES_PAR_LOT)]
