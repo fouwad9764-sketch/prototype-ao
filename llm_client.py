@@ -56,7 +56,9 @@ def appeler_ia(prompt: str, api_key: str, model: str = "mistral-large-latest",
         if rep.status_code == 200:
             return rep.json()["choices"][0]["message"]["content"]
         if rep.status_code == 401:
-            raise LLMError("Clé API refusée : vérifie la clé dans le fichier .env.")
+            raise LLMError("Clé API refusée par Mistral. Vérifie la clé dans Manage app > "
+                           "Settings > Secrets (une seule ligne, sans espace). "
+                           f"Détail Mistral : {rep.text[:200]}")
         if rep.status_code == 429 and essai < tentatives:
             time.sleep(5 * essai)  # limite de débit (fréquente sur le plan gratuit)
             continue
@@ -69,4 +71,4 @@ def appeler_ia(prompt: str, api_key: str, model: str = "mistral-large-latest",
 
 
 def cle_depuis_env() -> str:
-    return os.getenv("MISTRAL_API_KEY", "").strip()
+    return os.getenv("MISTRAL_API_KEY", "").strip().strip('"').strip()

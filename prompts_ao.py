@@ -74,3 +74,55 @@ Si l'extrait ne contient aucune exigence, réponds seulement : « Aucune exigenc
 EXTRAIT :
 {texte}
 """
+
+P4_MATRICE = """Rôle : chargé d'affaires qui prépare la candidature d'un client et doit être honnête
+sur ce que le client peut réellement prouver.
+
+Tu reçois une liste numérotée d'exigences du pouvoir adjudicateur et le dossier du client.
+Mets-les face à face dans UN SEUL tableau, avec exactement ces colonnes, dans cet ordre :
+
+| N° | Exigence | Source DCE | Ce que le client apporte | Statut | Preuve (document client) | Écart et action |
+
+Règles :
+- Une ligne par exigence de la liste, dans le même ordre, avec le même numéro. N'en omets
+  aucune, n'en ajoute aucune, ne fusionne pas de lignes.
+- Recopie l'exigence et sa source telles quelles (tu peux raccourcir l'exigence).
+- Statut : uniquement CONFORME, PARTIEL, NON CONFORME ou À VÉRIFIER.
+  - CONFORME : uniquement si le dossier du client contient l'élément de preuve.
+  - PARTIEL : le client répond en partie (ex. habilitation détenue par trop peu de personnes).
+  - NON CONFORME : le dossier montre que le client ne remplit pas l'exigence.
+  - À VÉRIFIER : l'information est absente du dossier du client, ou c'est une déclaration
+    que le client doit signer.
+- Preuve : nom du document du client (ou « fiche client ») et l'élément précis. Sinon « aucune ».
+- Écart et action : pour tout statut autre que CONFORME, une action concrète (pièce à demander
+  au client, formation, cotraitance, sous-traitance autorisée, renoncer à ce marché…).
+  Pour CONFORME, écris « — ».
+- N'invente aucune capacité, aucun chiffre, aucune certification du client.
+- Pas de texte avant ni après le tableau.
+
+EXIGENCES DU POUVOIR ADJUDICATEUR :
+{exigences}
+
+DOSSIER DU CLIENT :
+{profil_client}
+"""
+
+EXEMPLE_CLIENT_FICTIF = """Client FICTIF pour test : Électro Lagon Services SARL (Mamoudzou, Mayotte)
+Activité : travaux d'électricité basse tension, réseaux aériens et souterrains, branchements.
+Création : 2014. Effectif : 18 salariés dont 11 électriciens réseaux et 2 chefs d'équipe.
+Chiffre d'affaires : 2023 : 2,1 M€ ; 2024 : 2,6 M€ ; 2025 : 3,0 M€.
+Habilitations électriques : H0B0 pour tout le personnel ; B1V pour 11 électriciens ; B2V pour
+2 chefs d'équipe. Aucune habilitation TST (travaux sous tension) à ce jour.
+Travaux en hauteur : formation port du harnais pour 9 salariés.
+CACES : R486 (nacelles) catégorie B pour 4 salariés ; pas de CACES grue auxiliaire.
+Matériel : 2 camions nacelle 14 m, 1 mini-pelle, 3 véhicules utilitaires.
+Certifications : Qualifelec en cours de demande (dossier déposé en 2026).
+Assurances : RC professionnelle et décennale en cours (assureur local, attestation 2026).
+Références (5 dernières années) :
+- 2025 : Commune de Dembéni, rénovation éclairage public, 420 k€ HT
+- 2024 : Promoteur privé, raccordement BT d'un lotissement de 40 lots, 310 k€ HT
+- 2025 : EDM en sous-traitance d'un titulaire, remise en état de branchements après Chido, 180 k€ HT
+Zone d'intervention : toute l'île de Mayotte.
+Positionnement prix : prix moyens du marché local.
+Point faible connu : capacité limitée à 2 équipes simultanées.
+"""

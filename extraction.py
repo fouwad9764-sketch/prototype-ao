@@ -1,6 +1,7 @@
 """Lecture des pièces du DCE : PDF, Word, Excel, texte et archives ZIP."""
 
 import io
+import re
 import zipfile
 from dataclasses import dataclass, field
 
@@ -100,16 +101,17 @@ def decouper(texte: str, taille: int = 60_000) -> list:
 
 def deviner_type(nom: str) -> str:
     """Repère le type de pièce d'après son nom de fichier (RC, CCAP, CCTP...)."""
-    bas = nom.lower()
-    for cle, libelle in [
-        ("rc", "RC"), ("reglement", "RC"), ("règlement", "RC"),
-        ("ccap", "CCAP"), ("cctp", "CCTP"), ("ae", "AE"), ("acte", "AE"),
-        ("bpu", "BPU"), ("dqe", "DQE"), ("dpgf", "DPGF"), ("avis", "Avis"),
-        ("aapc", "Avis"), ("cadre", "Cadre de réponse"), ("memoire", "Cadre de réponse"),
-    ]:
-        if cle == "rc" or cle == "ae":
-            if f"_{cle}" in bas or f"{cle}_" in bas or f" {cle}" in bas or bas.startswith(cle + "."):
-                return libelle
-        elif cle in bas:
+    bas = nom.lower().rsplit(".", 1)[0]
+    mots = set(re.split(r"[^a-z0-9éèêà]+", bas))
+    if "annexe" in mots:
+        return "Annexe"
+    regles = [
+        ("Avis", {"aapc", "avis"}), ("CCAP", {"ccap"}), ("CCTP", {"cctp"}),
+        ("RC", {"rc", "reglement", "règlement"}), ("AE", {"ae", "acte"}),
+        ("BPU", {"bpu"}), ("DQE", {"dqe"}), ("DPGF", {"dpgf"}),
+        ("Cadre de réponse", {"cadre", "memoire", "mémoire", "crt"}),
+    ]
+    for libelle, cles in regles:
+        if mots & cles:
             return libelle
     return "Autre"
