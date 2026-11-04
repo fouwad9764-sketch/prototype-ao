@@ -11,11 +11,21 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import dossier_io, export_word, extraction, llm_client, mail_client, matrice, prompts_ao
-for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io):
+import devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, prompts_ao, qualification, stockage
+for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io, stockage,
+                qualification, devis):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
+import hashlib
+import json
 import time
+from datetime import date
+
+import pandas as pd
+
+from devis import CATALOGUE_DEFAUT, INFOS_DEFAUT, NIVEAU_VERS_LIGNE, UNITES, est_variable
+from qualification import P7_TYPE_MARCHE, estimer_charge, jours_ouvres_restants, lire_json
+from stockage import ROLES, STATUTS_DOSSIER, Base, nouvelle_cle, url_base
 
 from dossier_io import exporter_client, exporter_dossier, importer_client, importer_dossier, nom_fichier
 from export_word import markdown_vers_docx
@@ -27,7 +37,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v10.2 (04/11/2026)"
+VERSION = "v12.1 (05/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -44,11 +54,73 @@ STATUT_STYLE = {"CONFORME": ("#DDF3E4", "#1E6B3A"), "PARTIEL": ("#FFF1D6", "#8A5
                 "NON CONFORME": ("#FDE2E2", "#9B1C1C"), "À VÉRIFIER": ("#E2ECF8", "#1F4E8C"),
                 "SANS OBJET": ("#EEF0F2", "#4B5563")}
 
+TURQUOISE, MARINE, VERT, ORANGE, ROUGE, BLEU, GRIS = ("#00788A", "#004269", "#2E9E3E", "#FA7F0B",
+                                                     "#C62828", "#1F4E8C", "#6B7A83")
+
 st.markdown("""<style>
-button[data-baseweb="tab"] p {font-size: 1rem; font-weight: 600;}
-.stButton button, .stDownloadButton button, .stLinkButton a {min-height: 2.75rem;}
-div[data-testid="stMetric"] {border-left: 4px solid #00788A; padding-left: .75rem;}
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,500,0..1,0&display=block');
+html {font-size: 17.5px;}
+.stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp h1, .stApp h2, .stApp h3,
+.stApp h4, .stApp button, .stApp td, .stApp th {font-family: 'Plus Jakarta Sans', sans-serif !important;}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {font-weight: 800 !important; color: #004269;}
+.stApp h4 {margin-top: .8rem;}
+.stApp h4 span[data-testid="stIconMaterial"] {color: #00788A;}
+button[data-baseweb="tab"] p {font-size: 1.02rem !important; font-weight: 700 !important;}
+.stButton button, .stDownloadButton button, .stLinkButton a, .stFormSubmitButton button {
+  min-height: 3rem; border-radius: 12px !important; font-weight: 700 !important;}
+div[data-testid="stVerticalBlockBorderWrapper"], div[data-testid="stExpander"] details {border-radius: 16px !important;}
+.ms {font-family: 'Material Symbols Rounded'; font-weight: normal; font-style: normal; line-height: 1;
+  letter-spacing: normal; text-transform: none; display: inline-block; white-space: nowrap;
+  font-feature-settings: 'liga'; -webkit-font-smoothing: antialiased; vertical-align: middle;}
+.bandeau {background: linear-gradient(120deg, #004269 0%, #00788A 100%); color: #fff; border-radius: 20px;
+  padding: 1.1rem 1.4rem; display: flex; justify-content: space-between; align-items: center; gap: .8rem;
+  flex-wrap: wrap; margin-bottom: .6rem;}
+.bandeau .titre {font-size: 1.55rem; font-weight: 800; line-height: 1.2; font-family: 'Plus Jakarta Sans', sans-serif;}
+.bandeau .sous {opacity: .85; font-size: .92rem; font-family: 'Plus Jakarta Sans', sans-serif;}
+.puce {background: rgba(255,255,255,.16); border-radius: 999px; padding: .4rem .85rem; font-weight: 700;
+  font-size: .9rem; display: inline-flex; align-items: center; gap: .35rem; margin: .15rem;
+  font-family: 'Plus Jakarta Sans', sans-serif;}
+.grille {display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .75rem; margin: .4rem 0 1rem;}
+.carte {background: #fff; border: 1px solid #E3EAEE; border-radius: 16px; padding: .9rem 1rem; display: flex;
+  gap: .8rem; align-items: center; box-shadow: 0 1px 3px rgba(0,66,105,.07);
+  font-family: 'Plus Jakarta Sans', sans-serif;}
+.carte .ico {width: 2.7rem; height: 2.7rem; border-radius: 12px; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0;}
+.carte .ico .ms {font-size: 1.55rem;}
+.carte .val {font-size: 1.4rem; font-weight: 800; color: #0F2B3A; line-height: 1.15;}
+.carte .lib {font-size: .82rem; color: #5B6B75; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;}
+.carte.petite .val {font-size: 1rem; font-weight: 700;}
+.etapes {display: flex; flex-wrap: wrap; gap: .45rem; margin: .1rem 0 .9rem;}
+.etape {display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .8rem; border-radius: 999px;
+  font-weight: 700; font-size: .86rem; border: 1.5px solid #D5DEE3; color: #6B7A83; background: #fff;
+  font-family: 'Plus Jakarta Sans', sans-serif;}
+.etape.ok {background: #E6F4EA; border-color: #2E9E3E; color: #1E6B2E;}
+.etape .ms {font-size: 1.15rem;}
 </style>""", unsafe_allow_html=True)
+
+
+def _h(texte) -> str:
+    return (str(texte if texte is not None else "—").replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def ms(nom: str) -> str:
+    return '<span class="ms">' + nom + '</span>'
+
+
+def cartes(elements, petite: bool = False) -> None:
+    """elements : liste de (icône, libellé, valeur, couleur). Affiche des tuiles encadrées."""
+    classe = "carte petite" if petite else "carte"
+    html = "".join(
+        f'<div class="{classe}"><div class="ico" style="background:{c}1F;color:{c}">{ms(i)}</div>'
+        f'<div><div class="val">{_h(v)}</div><div class="lib">{_h(l)}</div></div></div>'
+        for i, l, v, c in elements)
+    st.markdown(f'<div class="grille">{html}</div>', unsafe_allow_html=True)
+
+
+def entete(icone: str, titre: str) -> None:
+    st.markdown(f"#### :material/{icone}: {titre}")
 
 
 def style_statut(valeur):
@@ -72,91 +144,268 @@ def secret(nom: str) -> str:
     return str(valeur or os.getenv(nom, "")).strip()
 
 
-# ---------- Mot de passe d'accès (version en ligne) ----------
-MOT_DE_PASSE = secret("APP_PASSWORD")
-if MOT_DE_PASSE and not st.session_state.get("connecte"):
+# ---------- Base de données sécurisée ----------
+CHAMPS_ANALYSE = ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "matrice",
+                  "checklist", "mail_brouillon", "journal_mails", "chronos", "dc1_dc2",
+                  "type_marche", "devis_lignes", "devis_infos")
+
+
+@st.cache_resource
+def cle_de_test() -> str:
+    return nouvelle_cle()
+
+
+@st.cache_resource
+def ouvrir_base(url: str, cle_chiffrement: str) -> Base:
+    return Base(url, cle_chiffrement)
+
+
+CLE_CHIFFREMENT = secret("CLE_CHIFFREMENT")
+if url_base() and not CLE_CHIFFREMENT:
     st.image(LOGO, width=120)
-    st.title("Pôle Marchés Publics — Sola Conseils")
-    saisie = st.text_input("Mot de passe", type="password")
-    if st.button("Entrer"):
-        if saisie == MOT_DE_PASSE:
-            st.session_state.connecte = True
-            st.rerun()
-        st.error("Mot de passe incorrect.")
+    st.title("Installation : clé de chiffrement")
+    st.warning("La base de données est branchée, mais la clé de chiffrement n'est pas encore configurée.")
+    st.markdown("1. Copie la clé ci-dessous **et garde-en une copie en lieu sûr** (coffre de mots de passe "
+                "de l'entreprise). Sans elle, les données enregistrées seront définitivement illisibles.\n"
+                "2. Dans Scalingo, ajoute la variable d'environnement **CLE_CHIFFREMENT** avec cette valeur.\n"
+                "3. Redémarre l'application.")
+    st.code(nouvelle_cle(), language=None)
+    st.caption("Une nouvelle clé est proposée à chaque affichage : n'en enregistre qu'une seule.")
+    st.stop()
+MODE_TEST = not (url_base() and CLE_CHIFFREMENT)
+try:
+    BASE = ouvrir_base(url_base(), CLE_CHIFFREMENT or cle_de_test())
+except Exception as exc:
+    st.error(f"Base de données inaccessible : {exc}")
     st.stop()
 
-# ---------- Barre latérale : réglages ----------
-with st.sidebar:
-    st.image(LOGO, width=110)
-    st.markdown("**Sola Conseils**  \nPôle Marchés Publics")
-    st.divider()
-    st.header("Réglages")
-    st.caption(f"Version de l'outil : {VERSION}")
-    cle_enregistree = secret("MISTRAL_API_KEY") or cle_depuis_env()
-    if cle_enregistree:
-        cle = cle_enregistree
-        st.success("Clé API Mistral chargée.")
+
+def ecran_titre():
+    """Écran centré avec le logo ; renvoie la colonne centrale."""
+    _, centre, _ = st.columns([1, 1.4, 1])
+    with centre:
+        st.image(LOGO, width=130)
+        st.markdown("### Pôle Marchés Publics")
+        st.caption("Sola Conseils")
+    return centre
+
+
+# ---------- Premier lancement : création du compte administrateur ----------
+if BASE.nb_utilisateurs() == 0:
+    admin_email, admin_mdp = secret("ADMIN_EMAIL"), secret("ADMIN_PASSWORD")
+    if admin_email and admin_mdp:
+        BASE.creer_utilisateur(admin_email, secret("ADMIN_NOM") or "Responsable du pôle",
+                               admin_mdp, "admin", "système")
     else:
-        cle = st.text_input("Clé API Mistral", type="password",
-                            help="À enregistrer dans les secrets de l'hébergement pour ne plus la saisir.")
-    modele = st.selectbox("Modèle", ["mistral-large-latest", "mistral-medium-latest",
-                                     "mistral-small-latest"],
-                          help="Large = plus fiable, Small = plus rapide et moins cher.")
-    st.info("Phase de test : hébergement hors UE. Déposez uniquement des DCE publics, "
-            "pas de données confidentielles de clients.")
-    if st.button("Recommencer à zéro"):
+        with ecran_titre(), st.form("premier_admin"):
+            st.markdown("#### :material/admin_panel_settings: Créer le compte administrateur")
+            code = st.text_input("Code d'installation", type="password", help="Le mot de passe APP_PASSWORD des Secrets.")
+            nom_admin = st.text_input("Nom et prénom")
+            email_admin = st.text_input("Adresse e-mail professionnelle")
+            mdp_admin = st.text_input("Mot de passe", type="password", help="10 caractères minimum, lettres et chiffres.")
+            if st.form_submit_button("Créer le compte", type="primary", icon=":material/person_add:",
+                                     use_container_width=True):
+                if not secret("APP_PASSWORD") or code != secret("APP_PASSWORD"):
+                    st.error("Code d'installation incorrect.")
+                else:
+                    try:
+                        BASE.creer_utilisateur(email_admin, nom_admin, mdp_admin, "admin", "installation")
+                        st.success("Compte créé. Tu peux te connecter.")
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+        st.stop()
+
+# ---------- Connexion ----------
+if not st.session_state.get("utilisateur"):
+    echecs = st.session_state.get("echecs_connexion", 0)
+    with ecran_titre():
+        if echecs >= 5:
+            st.error("Trop de tentatives. Recharge la page dans quelques minutes.", icon=":material/lock:")
+            st.stop()
+        formulaire = st.form("connexion")
+    with formulaire:
+        email_saisi = st.text_input("E-mail", placeholder="prenom.nom@…")
+        mdp_saisi = st.text_input("Mot de passe", type="password")
+        if st.form_submit_button("Se connecter", type="primary", icon=":material/login:", use_container_width=True):
+            utilisateur = BASE.connecter(email_saisi, mdp_saisi)
+            if utilisateur:
+                st.session_state.utilisateur = utilisateur
+                st.rerun()
+            st.session_state.echecs_connexion = echecs + 1
+            st.error("Adresse ou mot de passe incorrect.")
+    st.stop()
+
+UTILISATEUR = st.session_state.utilisateur
+QUI = UTILISATEUR["email"]
+
+for k in CHAMPS_ANALYSE + ("docs_client",):
+    st.session_state.setdefault(k, None)
+st.session_state.setdefault("fiche_client_txt", "")
+
+
+def vider_analyse():
+    for k in CHAMPS_ANALYSE:
+        st.session_state[k] = None
+    st.session_state.pop("editeur_checklist", None)
+
+
+def charger_client(client_id: str):
+    contenu = BASE.lire_client(client_id)
+    fiche, docs = importer_client(json.dumps({"format": "sola-fiche-client", "fiche": contenu.get("fiche", ""),
+                                              "documents": contenu.get("documents", [])}).encode())
+    st.session_state.fiche_client_txt = fiche
+    st.session_state.docs_client = docs
+    st.session_state.client_charge = client_id
+    st.session_state.empreinte_client = None
+
+
+def charger_dossier(client_id: str, dossier_id: str):
+    contenu = BASE.lire_dossier(client_id, dossier_id)
+    vider_analyse()
+    if contenu:
+        etat = importer_dossier(json.dumps(contenu).encode())["etat"]
+        for k in CHAMPS_ANALYSE:
+            st.session_state[k] = etat.get(k)
+    st.session_state.dossier_charge = dossier_id
+    st.session_state.empreinte_dossier = None
+
+
+def creer_client_cb():
+    st.session_state.client_choisi = BASE.creer_client(st.session_state.nom_nouveau_client, QUI)
+    st.session_state.nom_nouveau_client = ""
+
+
+def creer_dossier_cb(client_id: str):
+    st.session_state.dossier_choisi = BASE.creer_dossier(client_id, st.session_state.nom_nouveau_dossier, QUI)
+    st.session_state.nom_nouveau_dossier = ""
+
+
+# ---------- Barre latérale ----------
+with st.sidebar:
+    st.image(LOGO, width=96)
+    st.markdown(f":material/account_circle: **{UTILISATEUR['nom']}**  \n:gray[{UTILISATEUR['role']}]")
+    if st.button("Se déconnecter", icon=":material/logout:"):
+        BASE.tracer(QUI, "Déconnexion")
         st.session_state.clear()
         st.rerun()
+    if MODE_TEST:
+        st.warning("Mode test : données effacées au redémarrage. DCE publics et clients fictifs uniquement.",
+                   icon=":material/science:")
 
     st.divider()
-    st.subheader("Dossiers et clients")
-    st.caption("L'outil oublie tout à la fermeture : sauvegarde ton dossier dans Fichiers, "
-               "puis recharge-le pour reprendre.")
-    nom_dossier = st.text_input("Nom du dossier", key="nom_dossier",
-                                placeholder="ex. EDM réseaux BT - Électro Lagon")
-    st.download_button("Sauvegarder le dossier", use_container_width=True,
-                       data=exporter_dossier(st.session_state, nom_dossier or "dossier"),
-                       file_name=f"dossier_{nom_fichier(nom_dossier)}_{datetime.now():%Y%m%d_%H%M}.json",
-                       mime="application/json")
-    fichier_dossier = st.file_uploader("Reprendre un dossier (.json)", type=["json"], key="up_dossier")
-    if fichier_dossier and st.button("Charger ce dossier", use_container_width=True):
-        try:
-            charge = importer_dossier(fichier_dossier.getvalue())
-            for cle_etat, valeur in charge["etat"].items():
-                st.session_state[cle_etat] = valeur
-            st.session_state.pop("editeur_checklist", None)
-            st.session_state["nom_dossier_charge"] = f"{charge['nom']} (enregistré le {charge['enregistre_le']})"
+    st.markdown("#### :material/folder_shared: Client et dossier")
+    liste_clients = BASE.clients()
+    noms_clients = {c["id"]: c["nom"] for c in liste_clients}
+    client_id = st.selectbox("Client", [None] + list(noms_clients), key="client_choisi",
+                             format_func=lambda i: "— Choisir un client —" if i is None else noms_clients[i])
+    with st.expander("Nouveau client", icon=":material/add_business:"):
+        nom_nouveau_client = st.text_input("Nom du client", key="nom_nouveau_client")
+        st.button("Créer", icon=":material/add:", disabled=not nom_nouveau_client.strip(), on_click=creer_client_cb)
+
+    dossier_id = None
+    if client_id:
+        if st.session_state.get("client_charge") != client_id:
+            charger_client(client_id)
+            st.session_state.dossier_charge = None
+            vider_analyse()
+        liste_dossiers = BASE.dossiers(client_id)
+        noms_dossiers = {d["id"]: f"{d['nom']} · {d['statut']}" for d in liste_dossiers}
+        dossier_id = st.selectbox("Dossier", [None] + list(noms_dossiers), key="dossier_choisi",
+                                  format_func=lambda i: "— Choisir un dossier —" if i is None else noms_dossiers[i])
+        with st.expander("Nouveau dossier", icon=":material/create_new_folder:"):
+            nom_nouveau_dossier = st.text_input("Nom du dossier", key="nom_nouveau_dossier",
+                                                placeholder="ex. Sada - MOE escaliers")
+            st.button("Créer", icon=":material/add:", key="creer_dossier", disabled=not nom_nouveau_dossier.strip(),
+                      on_click=creer_dossier_cb, args=(client_id,))
+        if dossier_id and st.session_state.get("dossier_charge") != dossier_id:
+            charger_dossier(client_id, dossier_id)
+        if dossier_id:
+            st.success("Sauvegarde automatique", icon=":material/cloud_done:")
+        else:
+            st.info("Choisis ou crée un dossier.", icon=":material/folder_open:")
+    else:
+        st.info("Choisis ou crée un client.", icon=":material/apartment:")
+
+    st.divider()
+    with st.expander("Réglages de l'IA", icon=":material/tune:"):
+        cle_enregistree = secret("MISTRAL_API_KEY") or cle_depuis_env()
+        if cle_enregistree:
+            cle = cle_enregistree
+            st.success("Clé API Mistral chargée.")
+        else:
+            cle = st.text_input("Clé API Mistral", type="password")
+        modele = st.selectbox("Modèle", ["mistral-large-latest", "mistral-medium-latest",
+                                         "mistral-small-latest"],
+                              help="Large = plus fiable, Small = plus rapide et moins cher.")
+        if st.button("Vider l'analyse en cours", icon=":material/delete_sweep:"):
+            vider_analyse()
             st.rerun()
-        except ValueError as exc:
-            st.error(str(exc))
-    if st.session_state.get("nom_dossier_charge"):
-        st.success(f"Dossier repris : {st.session_state['nom_dossier_charge']}")
 
-    st.download_button("Sauvegarder la fiche client", use_container_width=True,
-                       data=exporter_client(st.session_state.get("fiche_client_txt", ""),
-                                            st.session_state.get("docs_client")),
-                       file_name="client_" + nom_fichier((st.session_state.get("fiche_client_txt", "").strip()
-                                                          .splitlines() or ["client"])[0]) + ".json",
-                       mime="application/json",
-                       disabled=not st.session_state.get("fiche_client_txt", "").strip())
-    fichier_client = st.file_uploader("Charger une fiche client (.json)", type=["json"], key="up_fiche_client")
-    if fichier_client and st.button("Utiliser cette fiche client", use_container_width=True):
-        try:
-            fiche, docs_c = importer_client(fichier_client.getvalue())
-            st.session_state["fiche_client_txt"] = fiche
-            st.session_state["docs_client"] = docs_c
-            st.session_state["matrice"] = st.session_state["checklist"] = st.session_state["go_no_go"] = None
-            st.session_state.pop("editeur_checklist", None)
-            st.rerun()
-        except ValueError as exc:
-            st.error(str(exc))
+    with st.expander("Copie de secours", icon=":material/backup:"):
+        st.download_button("Télécharger une copie", icon=":material/download:", use_container_width=True,
+                           data=exporter_dossier(st.session_state, "dossier"),
+                           file_name=f"dossier_{datetime.now():%Y%m%d_%H%M}.json", mime="application/json")
+        fichier_dossier = st.file_uploader("Importer un dossier (.json)", type=["json"], key="up_dossier")
+        if fichier_dossier and st.button("Importer", icon=":material/upload:", disabled=not dossier_id):
+            try:
+                charge = importer_dossier(fichier_dossier.getvalue())
+                for k in CHAMPS_ANALYSE:
+                    st.session_state[k] = charge["etat"].get(k)
+                if charge["etat"].get("fiche_client_txt"):
+                    st.session_state.fiche_client_txt = charge["etat"]["fiche_client_txt"]
+                    st.session_state.docs_client = charge["etat"].get("docs_client")
+                st.session_state.pop("editeur_checklist", None)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
-st.title("Préparer une réponse à un appel d'offres")
-st.caption("Pôle Marchés Publics — Sola Conseils · Toute sortie est un brouillon à valider avant usage.")
+    if UTILISATEUR["role"] == "admin":
+        with st.expander("Administration", icon=":material/admin_panel_settings:"):
+            st.markdown("**:material/person_add: Créer un compte**")
+            n_nom = st.text_input("Nom", key="n_nom")
+            n_email = st.text_input("E-mail", key="n_email")
+            n_mdp = st.text_input("Mot de passe provisoire", type="password", key="n_mdp")
+            n_role = st.selectbox("Rôle", ROLES, index=1, key="n_role")
+            if st.button("Créer le compte", icon=":material/person_add:"):
+                try:
+                    BASE.creer_utilisateur(n_email, n_nom, n_mdp, n_role, QUI)
+                    st.success("Compte créé.")
+                except ValueError as exc:
+                    st.error(str(exc))
+            st.dataframe(BASE.utilisateurs(), hide_index=True, use_container_width=True)
+            st.markdown("**:material/history: Journal des actions**")
+            st.dataframe(BASE.journal(100), hide_index=True, use_container_width=True)
 
-for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "docs_client", "matrice",
-          "checklist", "mail_brouillon", "journal_mails", "chronos", "dc1_dc2"):
-    st.session_state.setdefault(k, None)
+    with st.expander("Mon mot de passe", icon=":material/key:"):
+        nouveau_mdp = st.text_input("Nouveau mot de passe", type="password", key="nouveau_mdp")
+        if st.button("Changer", icon=":material/lock_reset:"):
+            try:
+                BASE.changer_mot_de_passe(QUI, nouveau_mdp, QUI)
+                st.success("Mot de passe changé.")
+            except ValueError as exc:
+                st.error(str(exc))
+    st.caption(f"Version {VERSION}")
+
+_puces = [f'<span class="puce">{ms("person")} {_h(UTILISATEUR["nom"])}</span>']
+if client_id:
+    _puces.insert(0, f'<span class="puce">{ms("apartment")} {_h(noms_clients.get(client_id))}</span>')
+if dossier_id:
+    _puces.insert(1, f'<span class="puce">{ms("folder_open")} '
+                     f'{_h(noms_dossiers.get(dossier_id, "").split(" · ")[0])}</span>')
+st.markdown(f'<div class="bandeau"><div><div class="titre">Pôle Marchés Publics</div>'
+            f'<div class="sous">Sola Conseils · tout résultat est un brouillon à valider</div></div>'
+            f'<div>{"".join(_puces)}</div></div>', unsafe_allow_html=True)
+if st.session_state.pieces or dossier_id:
+    _etapes = [("upload_file", "DCE", "pieces"), ("bolt", "Fiche flash", "fiche_flash"),
+               ("category", "Type", "type_marche"), ("thumbs_up_down", "Go/no-go", "go_no_go"),
+               ("checklist", "Exigences", "exigences"), ("table_chart", "Matrice", "matrice"),
+               ("badge", "DC1/DC2", "dc1_dc2"), ("request_quote", "Devis", "devis_infos")]
+    st.markdown('<div class="etapes">' + "".join(
+        f'<span class="etape{" ok" if st.session_state.get(k) else ""}">'
+        f'{ms("check_circle" if st.session_state.get(k) else i)} {t}</span>' for i, t, k in _etapes)
+        + "</div>", unsafe_allow_html=True)
+
 
 def lancer(prompt: str, etape: str = "Analyse") -> str | None:
     """Appelle l'IA et chronomètre l'appel (pour mesurer le temps gagné)."""
@@ -193,8 +442,50 @@ def profil_client() -> str:
 CONFIG_MAIL = {k: secret(k) for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
                                        "EXPEDITEUR", "NOM_EXPEDITEUR", "SIGNATURE")}
 
-t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_export = st.tabs(
-    ["1. Dossier", "2. Client et go/no-go", "3. Exigences", "4. Matrice", "5. Candidature", "6. Export"])
+t_accueil, t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_export, t_devis = st.tabs(
+    [":material/dashboard: Mes dossiers", ":material/upload_file: Dossier", ":material/thumbs_up_down: Go/no-go",
+     ":material/checklist: Exigences", ":material/table_chart: Matrice", ":material/assignment: Candidature",
+     ":material/download: Export", ":material/request_quote: Devis"])
+
+with t_accueil:
+    tous = BASE.dossiers()
+    if not tous:
+        st.info("Aucun dossier : crée un client puis un dossier dans le menu de gauche.",
+                icon=":material/create_new_folder:")
+    else:
+        cartes([("apartment", "Clients", len({d["client"] for d in tous}), MARINE),
+                ("folder_open", "Dossiers", len(tous), TURQUOISE),
+                ("pending_actions", "En cours", sum(1 for d in tous if d["statut"] in
+                                                    ("En analyse", "Go", "En préparation")), ORANGE),
+                ("send", "Déposés", sum(1 for d in tous if d["statut"] == "Déposé"), BLEU),
+                ("emoji_events", "Gagnés", sum(1 for d in tous if d["statut"] == "Gagné"), VERT)])
+        entete("view_list", "Suivi des dossiers")
+        tableau = [{"id": d["id"], "Client": d["client"], "Dossier": d["nom"], "Statut": d["statut"],
+                    "Date limite": d["date_limite"], "Mis à jour": d["maj_le"][:16], "Par": d["maj_par"]}
+                   for d in tous]
+        modifie = st.data_editor(pd.DataFrame(tableau), key="suivi_dossiers", hide_index=True, use_container_width=True,
+                                 column_order=["Client", "Dossier", "Statut", "Date limite", "Mis à jour", "Par"],
+                                 disabled=["Client", "Dossier", "Mis à jour", "Par"],
+                                 column_config={"Statut": st.column_config.SelectboxColumn(
+                                     "Statut", options=STATUTS_DOSSIER),
+                                     "Date limite": st.column_config.TextColumn(
+                                         "Date limite", help="JJ/MM/AAAA")})
+        for avant, apres in zip(tableau, modifie.to_dict("records")):
+            if (avant["Statut"], avant["Date limite"]) != (apres["Statut"], apres["Date limite"]):
+                BASE.maj_suivi(avant["id"], apres["Statut"], apres["Date limite"] or "", QUI)
+        st.caption(":material/edit: Statut et date limite modifiables directement dans le tableau.")
+
+def corpus_dce(lisibles_dce: list, budget: int = BUDGET_FICHE_FLASH) -> tuple:
+    """Texte des pièces dans la limite du budget. Renvoie (texte, complet)."""
+    corpus, total = [], 0
+    for p in lisibles_dce:
+        reste = budget - total
+        if reste <= 0:
+            break
+        corpus.append(f"===== {p.nom} ({p.type}) =====\n{p.texte[:reste]}")
+        total += min(len(p.texte), reste)
+    return "\n\n".join(corpus), total < budget
+
 
 pieces = st.session_state.pieces
 lisibles = [p for p in (pieces or []) if p.texte.strip() and getattr(p, "type", "") not in ("Plan", "Photo")]
@@ -202,12 +493,13 @@ PROFIL = ""
 
 with t_dossier:
     # ---------- 1. Import ----------
-    st.subheader("Importer le DCE")
-    fichiers = st.file_uploader("Pièces du DCE (PDF, DOCX, XLSX, TXT ou ZIP)", accept_multiple_files=True,
+    entete("upload_file", "Importer le DCE")
+    fichiers = st.file_uploader("Pièces du DCE", accept_multiple_files=True,
+                                help="PDF, Word, Excel, texte ou ZIP. Plans et photos sont mis de côté.",
                                 type=["pdf", "docx", "xlsx", "txt", "zip", "jpg", "jpeg", "png", "heic",
                                       "dwg", "dxf"])
 
-    if fichiers and st.button("Lire les fichiers", type="primary"):
+    if fichiers and st.button("Lire les fichiers", type="primary", icon=":material/auto_stories:"):
         pieces = []
         with st.spinner("Lecture des pièces…"):
             for f in fichiers:
@@ -221,53 +513,115 @@ with t_dossier:
 
     pieces = st.session_state.pieces
     if pieces:
-        st.dataframe(
-            [{"Pièce": p.nom, "Type présumé": p.type, "Caractères": p.nb_caracteres,
-              "Alertes": " ; ".join(p.alertes)} for p in pieces],
-            use_container_width=True, hide_index=True)
         lisibles = [p for p in pieces if p.texte.strip() and p.type not in ("Plan", "Photo")]
         a_part = [p for p in pieces if p.type in ("Plan", "Photo")]
-        if a_part:
-            st.info(f"{len(a_part)} plan(s) ou photo(s) mis de côté : non analysés par l'IA, "
-                    "à consulter pour le mémoire technique et le chiffrage.")
+        alertes = sum(1 for p in pieces if p.alertes)
+        cartes([("description", "Pièces", len(pieces), TURQUOISE),
+                ("task_alt", "Lues par l'IA", len(lisibles), VERT),
+                ("architecture", "Plans / photos", len(a_part), MARINE),
+                ("warning", "Alertes", alertes, ORANGE if alertes else GRIS)])
+        with st.expander("Détail des pièces", icon=":material/list:"):
+            st.dataframe(
+                [{"Pièce": p.nom, "Type": p.type, "Caractères": p.nb_caracteres,
+                  "Alertes": " ; ".join(p.alertes)} for p in pieces],
+                use_container_width=True, hide_index=True)
         if not lisibles:
-            st.error("Aucun texte lisible. Les PDF scannés ne sont pas encore gérés.")
+            st.error("Aucun texte lisible dans ces pièces.", icon=":material/error:")
             st.stop()
 
 
     # ---------- 2. Fiche flash ----------
     if pieces:
-        st.subheader("Fiche flash")
-        if st.button("Générer la fiche flash"):
-            corpus, total = [], 0
-            for p in lisibles:
-                reste = BUDGET_FICHE_FLASH - total
-                if reste <= 0:
-                    break
-                corpus.append(f"===== {p.nom} ({p.type}) =====\n{p.texte[:reste]}")
-                total += min(len(p.texte), reste)
-            if total >= BUDGET_FICHE_FLASH:
-                st.info("DCE long : seule la première partie (Avis, RC, CCAP en priorité) a servi à la fiche flash.")
+        entete("bolt", "Fiche flash")
+        if st.button("Générer la fiche flash", icon=":material/bolt:", type="primary"
+                     if not st.session_state.fiche_flash else "secondary"):
+            documents, complet = corpus_dce(lisibles)
+            if not complet:
+                st.info("DCE long : lecture des pièces principales (Avis, RC, CCAP).", icon=":material/info:")
             with st.spinner("Mistral lit le dossier…"):
-                st.session_state.fiche_flash = lancer(P1_FICHE_FLASH.format(documents="\n\n".join(corpus)), "Fiche flash")
+                st.session_state.fiche_flash = lancer(P1_FICHE_FLASH.format(documents=documents), "Fiche flash")
         if st.session_state.fiche_flash:
-            st.markdown(st.session_state.fiche_flash)
+            with st.container(border=True):
+                st.markdown(st.session_state.fiche_flash)
+
+    # ---------- Type de marché et temps de traitement ----------
+    if pieces:
+        entete("category", "Type de marché")
+        if st.button("Identifier le type de marché", icon=":material/search:", type="primary"
+                     if st.session_state.fiche_flash and not st.session_state.type_marche else "secondary"):
+            documents, _ = corpus_dce(lisibles)
+            with st.spinner("Mistral identifie le type de marché…"):
+                reponse = lancer(P7_TYPE_MARCHE.format(documents=documents), "Type de marché")
+            if reponse:
+                try:
+                    st.session_state.type_marche = lire_json(reponse)
+                except ValueError as exc:
+                    st.error(str(exc))
+        tm = st.session_state.type_marche
+        if tm:
+            if tm.get("objet"):
+                st.markdown(f"**{tm['objet']}**" + (f"  \n:gray[{tm['sous_type']}]" if tm.get("sous_type") else ""))
+            icones_nature = {"Travaux": "construction", "Fournitures": "inventory_2", "Services": "support_agent",
+                             "Prestations intellectuelles": "psychology", "Mixte": "join_inner"}
+            cartes([(icones_nature.get(tm.get("nature"), "category"), "Nature", tm.get("nature"), TURQUOISE),
+                    ("gavel", "Procédure", str(tm.get("procedure", "—")).replace("Procédure adaptée (MAPA)", "MAPA"),
+                     MARINE),
+                    ("account_tree", "Forme", tm.get("forme"), BLEU),
+                    ("view_module", "Lots", tm.get("nb_lots") or 1, ORANGE)])
+            poids = tm.get("poids_technique")
+            cartes([("event", "Date limite", tm.get("date_limite"), ROUGE),
+                    ("euro", "Montant estimé", tm.get("montant_estime"), VERT),
+                    ("schedule", "Durée", tm.get("duree"), MARINE),
+                    ("description", "Mémoire technique", tm.get("memoire_technique"), TURQUOISE),
+                    ("balance", "Poids technique", f"{poids} %" if poids is not None else "non trouvé", TURQUOISE),
+                    ("receipt_long", "Type de prix", tm.get("type_prix"), BLEU),
+                    ("directions_walk", "Visite obligatoire", tm.get("visite_obligatoire"), ORANGE),
+                    ("inventory_2", "Échantillons", tm.get("echantillons"), GRIS),
+                    ("alt_route", "Variantes", tm.get("variantes"), GRIS),
+                    ("handshake", "Négociation", tm.get("negociation"), GRIS)], petite=True)
+            if tm.get("justification"):
+                with st.expander("Sources", icon=":material/menu_book:"):
+                    st.write(tm["justification"])
+
+            entete("timer", "Temps de traitement")
+            c1, c2 = st.columns(2)
+            tm["lots_vises"] = c1.number_input("Lots visés", min_value=1,
+                                               max_value=max(1, int(tm.get("nb_lots") or 1)),
+                                               value=int(tm.get("lots_vises") or 1))
+            tm["client_nouveau"] = c2.checkbox("Premier dossier du client", help="Pièces du client à collecter.",
+                                               value=bool(tm.get("client_nouveau")))
+            estimation = estimer_charge(tm, tm["lots_vises"], sum(len(p.texte) for p in lisibles),
+                                        tm["client_nouveau"])
+            tm["estimation"] = {"total": estimation["total"], "niveau": estimation["niveau"]}
+            jours = jours_ouvres_restants(tm.get("date_limite"))
+            couleur_niveau = {"Simple": VERT, "Moyen": ORANGE, "Complexe": ROUGE}[estimation["niveau"]]
+            cartes([("timer", "Charge estimée", f"{estimation['total']:g} h".replace(".", ","), TURQUOISE),
+                    ("signal_cellular_alt", "Niveau", estimation["niveau"], couleur_niveau),
+                    ("event_available", "Jours ouvrés restants", "?" if jours is None else jours,
+                     ROUGE if jours is not None and jours <= 5 else MARINE)])
+            if jours is not None and jours <= 2:
+                st.error("Délai très court.", icon=":material/alarm:")
+            elif jours is not None and estimation["total"] > jours * 4:
+                st.warning("Délai serré : plus de 4 h de travail par jour restant.", icon=":material/alarm:")
+            with st.expander("Détail du calcul", icon=":material/calculate:"):
+                st.dataframe(pd.DataFrame(estimation["postes"], columns=["Poste", "Heures", "Base de calcul"]),
+                             hide_index=True, use_container_width=True)
+                st.caption("Temps de référence indicatifs, à ajuster après les premiers dossiers.")
 
 with t_client:
     if not pieces:
-        st.info("Commence par importer et lire le DCE dans l'onglet « 1. Dossier ».")
+        st.info("Importe d'abord le DCE (onglet Dossier).", icon=":material/upload_file:")
     if pieces:
-        st.subheader("Profil du client")
-        st.caption("Utilisé par le go/no-go et par la matrice de conformité.")
-        st.button("Charger un client fictif (test)", on_click=charger_exemple)
+        entete("apartment", "Profil du client")
+        st.button("Client fictif (test)", icon=":material/science:", on_click=charger_exemple)
         st.text_area(
             "Fiche client", key="fiche_client_txt", height=200,
             placeholder="Nom, activité, chiffre d'affaires des 3 dernières années, effectifs, "
                         "habilitations et certifications, matériel, assurances, références "
                         "(acheteur, objet, montant, année), zone d'intervention…")
-        docs = st.file_uploader("Documents du client (facultatif : plaquette, Kbis, attestations, CV, références…)",
+        docs = st.file_uploader("Documents du client", help="Facultatif : plaquette, Kbis, attestations, CV, références…",
                                 accept_multiple_files=True, type=["pdf", "docx", "xlsx", "txt"], key="up_client")
-        if docs and st.button("Lire les documents du client"):
+        if docs and st.button("Lire les documents", icon=":material/auto_stories:"):
             lus = []
             for f in docs:
                 lus.extend(lire_fichier(f.name, f.getvalue()))
@@ -282,27 +636,27 @@ with t_client:
 
     # ---------- 4. Go/no-go ----------
     if st.session_state.fiche_flash:
-        st.subheader("Go/no-go")
-        if st.button("Analyser le go/no-go", disabled=not PROFIL):
+        entete("thumbs_up_down", "Go/no-go")
+        if st.button("Analyser le go/no-go", icon=":material/psychology:", type="primary", disabled=not PROFIL):
             with st.spinner("Analyse en cours…"):
                 st.session_state.go_no_go = lancer(P2_GO_NO_GO.format(
                     fiche_flash=st.session_state.fiche_flash, fiche_client=PROFIL,
                     date_du_jour=datetime.now().strftime("%d/%m/%Y")), "Go/no-go")
         if not PROFIL:
-            st.caption("Renseigne d'abord le profil du client (onglet 2).")
+            st.caption(":material/info: Remplis d'abord le profil du client.")
         if st.session_state.go_no_go:
-            st.markdown(st.session_state.go_no_go)
+            with st.container(border=True):
+                st.markdown(st.session_state.go_no_go)
 
 with t_exigences:
     if not pieces:
-        st.info("Commence par importer et lire le DCE dans l'onglet « 1. Dossier ».")
+        st.info("Importe d'abord le DCE (onglet Dossier).", icon=":material/upload_file:")
     # ---------- 5. Exigences ----------
     if pieces:
-        st.subheader("Liste des exigences")
-        st.caption("Chaque pièce est analysée séparément, puis les résultats sont regroupés.")
+        entete("checklist", "Exigences du DCE")
         choix = st.multiselect("Pièces à analyser", [p.nom for p in lisibles],
                                default=[p.nom for p in lisibles if p.type in ("RC", "CCAP", "CCTP", "Cadre de réponse")])
-        if st.button("Extraire les exigences", disabled=not choix):
+        if st.button("Extraire les exigences", icon=":material/manage_search:", type="primary", disabled=not choix):
             resultats = []
             travaux = []
             for p in lisibles:
@@ -332,28 +686,29 @@ with t_exigences:
         if st.session_state.exigences:
             nb_final = len(lignes_de_tableaux(st.session_state.exigences))
             if st.session_state.exigences_brutes:
-                st.success(f"{len(st.session_state.exigences_brutes)} exigences brutes regroupées en "
-                           f"{nb_final} exigences utiles.")
-            with st.expander("Voir les exigences", expanded=True):
+                cartes([("manage_search", "Exigences trouvées", len(st.session_state.exigences_brutes), GRIS),
+                        ("filter_alt", "Exigences utiles", nb_final, TURQUOISE)])
+            with st.expander("Voir les exigences", expanded=True, icon=":material/list_alt:"):
                 st.markdown(st.session_state.exigences)
 
 with t_matrice:
     if not st.session_state.exigences:
-        st.info("Extrais d'abord les exigences dans l'onglet « 3. Exigences ».")
+        st.info("Extrais d'abord les exigences.", icon=":material/checklist:")
     # ---------- 6. Matrice de conformité ----------
     if st.session_state.exigences:
-        st.subheader("Matrice de conformité : exigences face aux capacités du client")
+        entete("table_chart", "Matrice de conformité")
         toutes = lignes_de_tableaux(st.session_state.exigences)
         phases = ["Candidature", "Dépôt", "Offre", "Exécution"]
         if any(len(c) > 2 and c[2].strip() for c in toutes):
-            retenues = st.multiselect("Phases à inclure dans la matrice", phases,
+            retenues = st.multiselect("Phases", phases,
                                       default=["Candidature", "Dépôt"])
             exigences_lignes = [c for c in toutes if len(c) < 3 or not c[2].strip()
                                 or any(p.lower() in c[2].lower() for p in retenues)]
         else:
             exigences_lignes = toutes
-        st.caption(f"{len(exigences_lignes)} exigences retenues sur {len(toutes)}. Chaque statut reste à valider.")
-        if st.button("Construire la matrice", disabled=not (PROFIL and exigences_lignes)):
+        st.caption(f":material/filter_alt: {len(exigences_lignes)} exigences retenues sur {len(toutes)}")
+        if st.button("Construire la matrice", icon=":material/table_chart:", type="primary",
+                     disabled=not (PROFIL and exigences_lignes)):
             lots = [exigences_lignes[i:i + EXIGENCES_PAR_LOT]
                     for i in range(0, len(exigences_lignes), EXIGENCES_PAR_LOT)]
             sorties, numero = [], 1
@@ -379,37 +734,38 @@ with t_matrice:
                     st.warning(f"{len(st.session_state.matrice)} lignes produites pour "
                                f"{len(exigences_lignes)} exigences : vérifie qu'aucune n'a été oubliée.")
         if not PROFIL:
-            st.caption("Renseigne d'abord le profil du client (onglet 2).")
+            st.caption(":material/info: Remplis d'abord le profil du client.")
 
         matrice = st.session_state.matrice
         if matrice:
             comptes = compter(matrice)
-            colonnes = st.columns(len(comptes))
-            for col, (statut, nombre) in zip(colonnes, comptes.items()):
-                col.metric(statut.capitalize(), nombre)
+            icones_statut = {"CONFORME": ("check_circle", VERT), "PARTIEL": ("contrast", ORANGE),
+                             "NON CONFORME": ("cancel", ROUGE), "À VÉRIFIER": ("help", BLEU),
+                             "SANS OBJET": ("remove_circle", GRIS)}
+            cartes([(*icones_statut.get(statut, ("circle", GRIS))[:1], statut.capitalize(), nombre,
+                     icones_statut.get(statut, ("", GRIS))[1]) for statut, nombre in comptes.items()])
             if comptes["NON CONFORME"]:
-                st.error(f"{comptes['NON CONFORME']} point(s) bloquant(s) : à régler avant de décider de candidater.")
-            filtre = st.multiselect("Afficher les statuts", list(comptes),
+                st.error(f"{comptes['NON CONFORME']} point(s) bloquant(s) avant de candidater.", icon=":material/block:")
+            filtre = st.multiselect("Statuts affichés", list(comptes),
                                     default=[s for s in comptes if s != "SANS OBJET"])
             visibles = [l for l in matrice if l["Statut"] in filtre]
             if visibles:
                 st.dataframe(tableau_statuts(visibles, COLONNES_MATRICE),
                              use_container_width=True, hide_index=True)
             nom_client = (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]
-            st.download_button("Télécharger la matrice en Excel", data=vers_excel(matrice, nom_client),
+            st.download_button("Matrice Excel", icon=":material/download:", data=vers_excel(matrice, nom_client),
                                file_name=f"matrice_conformite_{datetime.now():%Y%m%d_%H%M}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with t_candidature:
     if not st.session_state.matrice:
-        st.info("Construis d'abord la matrice dans l'onglet « 4. Matrice ».")
+        st.info("Construis d'abord la matrice.", icon=":material/table_chart:")
     if st.session_state.matrice:
-        st.subheader("Check-list de candidature et e-mail au client")
+        entete("assignment_turned_in", "Check-list de candidature")
         nom_client = (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]
 
         if st.session_state.checklist is None:
             st.session_state.checklist = lignes_checklist(st.session_state.matrice)
-        st.caption("Coche au fur et à mesure. « Bloquant » = à régler avant de décider de candidater.")
         edite = st.data_editor(st.session_state.checklist, key="editeur_checklist", hide_index=True,
                                use_container_width=True, disabled=["Priorité", "Exigence", "Statut", "Source DCE"],
                                column_config={"Fait": st.column_config.CheckboxColumn("Fait"),
@@ -418,12 +774,12 @@ with t_candidature:
         st.session_state.checklist = edite
         faits = sum(1 for l in edite if l["Fait"])
         st.progress(faits / max(len(edite), 1), text=f"{faits} / {len(edite)} éléments traités")
-        st.download_button("Télécharger la check-list en Excel",
+        st.download_button("Check-list Excel", icon=":material/download:",
                            data=checklist_vers_excel(edite, f"Check-list de candidature : {nom_client}"),
                            file_name=f"checklist_candidature_{datetime.now():%Y%m%d_%H%M}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        st.markdown("**E-mail au client : pièces et informations à transmettre**")
+        entete("mail", "E-mail au client")
         a_obtenir = [l for l in edite if not l["Fait"] and l["Statut"] != "CONFORME"
                      and (l["Qui"] == "Client" or l["Statut"] == "NON CONFORME")]
         col1, col2 = st.columns(2)
@@ -434,7 +790,8 @@ with t_candidature:
                                      format_func=lambda d: f"{jours_fr[d.weekday()]} {d:%d/%m/%Y}")
         signature = CONFIG_MAIL["SIGNATURE"] or st.text_area(
             "Signature", value="Prénom Nom\nResponsable Pôle Marchés Publics\nSola Conseils", height=100)
-        if st.button(f"Rédiger l'e-mail ({len(a_obtenir)} éléments à demander)", disabled=not a_obtenir):
+        if st.button(f"Rédiger l'e-mail ({len(a_obtenir)} éléments)", icon=":material/edit_note:",
+                     type="primary", disabled=not a_obtenir):
             elements = "\n".join(f"- [{l['Statut']}] {l['Exigence']} → {l['Action']}" for l in a_obtenir)
             with st.spinner("Rédaction…"):
                 texte = lancer(P5_MAIL_CLIENT.format(
@@ -450,11 +807,11 @@ with t_candidature:
             responsable = CONFIG_MAIL["EXPEDITEUR"]
             copie = responsable if responsable and st.checkbox("Mettre le responsable du pôle en copie", value=True) else ""
             if email_client:
-                st.link_button("Ouvrir dans l'app Mail", lien_mailto(email_client, objet, corps, copie))
+                st.link_button("Ouvrir dans Mail", icon=":material/mail:", url=lien_mailto(email_client, objet, corps, copie))
             if smtp_configure(CONFIG_MAIL):
                 relu = st.checkbox("J'ai relu l'e-mail et je confirme l'envoi au client")
                 joindre = st.checkbox("Joindre la check-list Excel", value=True)
-                if st.button("Envoyer maintenant depuis la boîte du pôle", type="primary",
+                if st.button("Envoyer depuis la boîte du pôle", type="primary", icon=":material/send:",
                              disabled=not (relu and email_client and "@" in email_client)):
                     pj = [("checklist_candidature.xlsx", checklist_vers_excel(edite, f"Check-list : {nom_client}"),
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] if joindre else []
@@ -468,32 +825,31 @@ with t_candidature:
                     except Exception as exc:
                         st.error(f"Envoi impossible : {exc}. Vérifie les réglages SMTP dans les Secrets.")
             else:
-                st.caption("Envoi direct non configuré : utilise « Ouvrir dans l'app Mail », ou ajoute les "
-                           "réglages SMTP de la boîte du pôle dans les Secrets.")
+                st.caption(":material/info: Envoi direct non configuré : utilise « Ouvrir dans Mail ».")
             if st.session_state.journal_mails:
                 st.dataframe(st.session_state.journal_mails, hide_index=True, use_container_width=True)
 
 with t_candidature:
     if st.session_state.fiche_flash:
         st.divider()
-        st.subheader("Préparer le DC1 et le DC2")
-        st.caption("Fiche d'aide au remplissage des formulaires officiels (à télécharger sur le site "
-                   "du ministère de l'Économie), ou du DUME. Les cases « [À COMPLÉTER] » restent à remplir.")
+        entete("badge", "DC1 / DC2")
         profil_dc = profil_client()
-        if st.button("Préparer la fiche DC1 / DC2", disabled=not profil_dc):
+        if st.button("Préparer la fiche DC1 / DC2", icon=":material/badge:", disabled=not profil_dc,
+                     help="Aide au remplissage des formulaires officiels DC1, DC2 ou du DUME."):
             synthese = "\n".join(f"- {l['Exigence']} → {l['Statut']}" for l in (st.session_state.matrice or []))
             with st.spinner("Préparation des formulaires…"):
                 st.session_state.dc1_dc2 = lancer(P6_DC1_DC2.format(
                     fiche_flash=st.session_state.fiche_flash, fiche_client=profil_dc,
                     matrice=synthese or "Matrice non construite."), "DC1 / DC2")
         if not profil_dc:
-            st.caption("Renseigne d'abord le profil du client (onglet 2).")
+            st.caption(":material/info: Remplis d'abord le profil du client.")
         if st.session_state.dc1_dc2:
             a_completer = st.session_state.dc1_dc2.count("[À COMPLÉTER")
             if a_completer:
-                st.warning(f"{a_completer} champ(s) à compléter avec le client.")
-            st.markdown(st.session_state.dc1_dc2)
-            st.download_button("Télécharger la fiche DC1 / DC2 en Word",
+                st.warning(f"{a_completer} champ(s) à compléter avec le client.", icon=":material/edit:")
+            with st.container(border=True):
+                st.markdown(st.session_state.dc1_dc2)
+            st.download_button("Fiche DC1 / DC2 (Word)", icon=":material/download:",
                                data=markdown_vers_docx([("Fiche d'aide au remplissage DC1 / DC2",
                                                          st.session_state.dc1_dc2)], "Préparation DC1 / DC2"),
                                file_name=f"preparation_DC1_DC2_{datetime.now():%Y%m%d_%H%M}.docx",
@@ -501,14 +857,11 @@ with t_candidature:
 
 with t_export:
     if st.session_state.chronos:
-        st.subheader("Temps de travail de l'IA sur ce dossier")
+        entete("speed", "Temps de travail de l'IA")
         total = sum(c["Durée (s)"] for c in st.session_state.chronos)
-        c1, c2 = st.columns(2)
-        c1.metric("Temps total de l'IA", f"{total / 60:.1f} min")
-        c2.metric("Appels réalisés", len(st.session_state.chronos))
-        st.caption("Ajoute ton temps de relecture pour obtenir le temps réel du dossier, "
-                   "et compare-le au temps d'une analyse manuelle.")
-        with st.expander("Détail par étape"):
+        cartes([("timer", "Temps total", f"{total / 60:.1f} min".replace(".", ","), TURQUOISE),
+                ("smart_toy", "Appels à l'IA", len(st.session_state.chronos), MARINE)])
+        with st.expander("Détail par étape", icon=":material/list:"):
             st.dataframe(st.session_state.chronos, hide_index=True, use_container_width=True)
 
     # ---------- 8. Export ----------
@@ -518,9 +871,155 @@ with t_export:
     if st.session_state.matrice:
         sections.append(("Matrice de conformité", vers_markdown(st.session_state.matrice)))
     if sections:
-        st.subheader("Exporter le dossier d'analyse")
+        entete("download", "Exporter l'analyse")
         nom = f"analyse_dce_{datetime.now():%Y%m%d_%H%M}.docx"
-        st.download_button("Télécharger en Word", data=markdown_vers_docx(sections, "Analyse du DCE"),
+        st.download_button("Analyse complète (Word)", icon=":material/description:", type="primary",
+                           data=markdown_vers_docx(sections, "Analyse du DCE"),
                            file_name=nom,
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+
+# ---------- 9. Devis ----------
+def lignes_depuis_catalogue(catalogue: list, niveau: str | None) -> list:
+    a_cocher = {"Qualification et go/no-go", NIVEAU_VERS_LIGNE.get(niveau or "", "")}
+    return [{"Inclure": l.get("Prestation") in a_cocher, "Prestation": l.get("Prestation", ""),
+             "Description": l.get("Description", ""), "Unité": l.get("Unité", "forfait"), "Quantité": 1.0,
+             "Prix unitaire HT": float(l.get("Prix unitaire HT") or 0)} for l in catalogue]
+
+
+with t_devis:
+    entete("request_quote", "Devis client")
+    catalogue = BASE.lire_parametre("catalogue_prestations", CATALOGUE_DEFAUT)
+    infos_pole = {**INFOS_DEFAUT, **(BASE.lire_parametre("infos_devis", {}) or {})}
+
+    if UTILISATEUR["role"] == "admin":
+        with st.expander("Tarifs et mentions (administrateur)", icon=":material/price_change:"):
+            cat_edite = st.data_editor(
+                pd.DataFrame(catalogue, columns=["Prestation", "Description", "Unité", "Prix unitaire HT"]),
+                key="edit_catalogue", num_rows="dynamic", hide_index=True, use_container_width=True,
+                column_config={"Unité": st.column_config.SelectboxColumn("Unité", options=UNITES),
+                               "Prix unitaire HT": st.column_config.NumberColumn(
+                                   "Prix unitaire HT", min_value=0.0, step=10.0, format="%.2f",
+                                   help="En euros HT. Pour l'unité « % du marché attribué », indique le pourcentage.")})
+            emetteur = st.text_area("Coordonnées de Sola Conseils (en-tête du devis)", infos_pole["emetteur"])
+            c1, c2 = st.columns(2)
+            taux_tva = c1.number_input("Taux de TVA (%)", min_value=0.0, max_value=30.0, step=0.5,
+                                       value=float(infos_pole["taux_tva"]))
+            validite = c2.number_input("Validité du devis (jours)", min_value=1, max_value=180,
+                                       value=int(infos_pole["validite_jours"]))
+            mention_tva = st.text_input("Mention si TVA à 0 %", infos_pole["mention_tva"])
+            conditions = st.text_area("Conditions de paiement", infos_pole["conditions"])
+            if st.button("Enregistrer", type="primary", icon=":material/save:"):
+                propre = [{k: (v if not (isinstance(v, float) and pd.isna(v)) else 0.0) for k, v in l.items()}
+                          for l in cat_edite.fillna({"Description": "", "Unité": "forfait"}).to_dict("records")
+                          if str(l.get("Prestation") or "").strip()]
+                BASE.ecrire_parametre("catalogue_prestations", propre, QUI)
+                BASE.ecrire_parametre("infos_devis", {"emetteur": emetteur, "taux_tva": taux_tva,
+                                                      "validite_jours": validite, "mention_tva": mention_tva,
+                                                      "conditions": conditions}, QUI)
+                st.success("Tarifs enregistrés.")
+                st.rerun()
+
+    if all(float(l.get("Prix unitaire HT") or 0) == 0 for l in catalogue):
+        st.warning("Tarifs pas encore fixés (0 €) : à saisir par l'administrateur après validation de la direction.",
+                   icon=":material/price_change:")
+
+    if not client_id:
+        st.info("Choisis un client dans le menu de gauche.", icon=":material/apartment:")
+    else:
+        tm = st.session_state.type_marche or {}
+        niveau = (tm.get("estimation") or {}).get("niveau")
+        marqueur = (client_id, dossier_id)
+        if st.session_state.get("devis_marqueur") != marqueur:
+            infos = st.session_state.devis_infos or {}
+            st.session_state.devis_base = st.session_state.devis_lignes or lignes_depuis_catalogue(catalogue, niveau)
+            st.session_state.dv_numero = infos.get("numero") or devis.numero_devis()
+            st.session_state.dv_adresse = infos.get("client_adresse", "")
+            st.session_state.dv_objet = infos.get("objet") or (
+                f"Accompagnement à la réponse au marché : {tm['objet']}" if tm.get("objet") else "")
+            st.session_state.dv_charge = bool(infos.get("afficher_charge", False))
+            st.session_state.pop("editeur_devis", None)
+            st.session_state.devis_marqueur = marqueur
+
+        if niveau:
+            st.info(f"Dossier « {niveau} » ({tm['estimation']['total']:g} h) : forfait correspondant coché.",
+                    icon=":material/auto_awesome:")
+        if st.button("Repartir du catalogue", icon=":material/restart_alt:"):
+            st.session_state.devis_base = lignes_depuis_catalogue(catalogue, niveau)
+            st.session_state.pop("editeur_devis", None)
+            st.rerun()
+
+        c1, c2 = st.columns(2)
+        numero = c1.text_input("N° du devis", key="dv_numero")
+        c2.text_input("Client", value=noms_clients.get(client_id, ""), disabled=True)
+        adresse = st.text_area("Adresse du client", key="dv_adresse", height=80)
+        objet = st.text_input("Objet du devis", key="dv_objet")
+
+        edite = st.data_editor(
+            pd.DataFrame(st.session_state.devis_base,
+                         columns=["Inclure", "Prestation", "Description", "Unité", "Quantité", "Prix unitaire HT"]),
+            key="editeur_devis", num_rows="dynamic", hide_index=True, use_container_width=True,
+            column_config={"Inclure": st.column_config.CheckboxColumn("Inclure", default=False),
+                           "Unité": st.column_config.SelectboxColumn("Unité", options=UNITES),
+                           "Quantité": st.column_config.NumberColumn("Qté", min_value=0.0, step=1.0),
+                           "Prix unitaire HT": st.column_config.NumberColumn("Prix unitaire HT", min_value=0.0,
+                                                                             step=10.0, format="%.2f")})
+        toutes = edite.fillna({"Inclure": False, "Description": "", "Unité": "forfait", "Quantité": 0.0,
+                               "Prix unitaire HT": 0.0}).to_dict("records")
+        st.session_state.devis_lignes = toutes
+        retenues = [l for l in toutes if l.get("Inclure") and str(l.get("Prestation") or "").strip()]
+        afficher_charge = st.checkbox("Indiquer la charge estimée sur le devis", key="dv_charge",
+                                      disabled=not niveau)
+        st.session_state.devis_infos = {"numero": numero, "client_adresse": adresse, "objet": objet,
+                                        "afficher_charge": afficher_charge}
+
+        totaux = devis.calculer(retenues, infos_pole["taux_tva"])
+        cartes([("receipt_long", "Total HT", devis.euros(totaux["total_ht"]), MARINE),
+                ("payments", "Total TTC" if infos_pole["taux_tva"] else "Net à payer",
+                 devis.euros(totaux["total_ttc"]), VERT)])
+        variables = [l for l in retenues if est_variable(l)]
+        if variables:
+            st.caption("Rémunération variable (hors total) : " + " ; ".join(
+                f"{l['Prestation']} {float(l['Prix unitaire HT']):g} %" for l in variables))
+
+        if not retenues:
+            st.info("Coche au moins une prestation (colonne « Inclure »).", icon=":material/check_box:")
+        else:
+            infos_pdf = {**infos_pole, "numero": numero, "date": date.today(),
+                         "client_nom": noms_clients.get(client_id, ""), "client_adresse": adresse,
+                         "objet": objet,
+                         "charge": (f"Charge de travail estimée pour ce dossier : {tm['estimation']['total']:g} h "
+                                    f"(dossier {niveau.lower()})." if afficher_charge and niveau else "")}
+            st.download_button("Devis PDF", type="primary", icon=":material/picture_as_pdf:",
+                               data=devis.vers_pdf(infos_pdf, retenues, LOGO),
+                               file_name=f"{nom_fichier(numero)}_{nom_fichier(noms_clients.get(client_id, ''))}.pdf",
+                               mime="application/pdf")
+            st.caption(":material/visibility: Relis le devis avant de l'envoyer.")
+
+
+# ---------- Enregistrement automatique (chiffré) ----------
+def _empreinte(donnees) -> str:
+    return hashlib.sha256(json.dumps(donnees, ensure_ascii=False, sort_keys=True, default=str)
+                          .encode("utf-8")).hexdigest()
+
+
+if client_id:
+    contenu_client = json.loads(exporter_client(st.session_state.get("fiche_client_txt", ""),
+                                                st.session_state.get("docs_client")).decode("utf-8"))
+    contenu_client = {"fiche": contenu_client["fiche"], "documents": contenu_client["documents"]}
+    empreinte = _empreinte(contenu_client)
+    if st.session_state.get("empreinte_client") is None:
+        st.session_state.empreinte_client = empreinte
+    elif empreinte != st.session_state.empreinte_client:
+        BASE.enregistrer_client(client_id, contenu_client, QUI)
+        st.session_state.empreinte_client = empreinte
+
+if client_id and dossier_id:
+    contenu_dossier = json.loads(exporter_dossier(st.session_state, "dossier").decode("utf-8"))
+    contenu_dossier.pop("enregistre_le", None)
+    empreinte = _empreinte(contenu_dossier)
+    if st.session_state.get("empreinte_dossier") is None:
+        st.session_state.empreinte_dossier = empreinte
+    elif empreinte != st.session_state.empreinte_dossier:
+        BASE.enregistrer_dossier(client_id, dossier_id, contenu_dossier, QUI)
+        st.session_state.empreinte_dossier = empreinte

@@ -13,7 +13,8 @@ FORMAT = "sola-dossier-ao"
 VERSION_FORMAT = 1
 
 CHAMPS_TEXTE = ["fiche_flash", "go_no_go", "exigences", "fiche_client_txt", "dc1_dc2"]
-CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos"]
+CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos", "devis_lignes"]
+CHAMPS_OBJETS = ["type_marche", "devis_infos"]
 
 
 def _piece_vers_dict(p) -> dict:
@@ -39,6 +40,8 @@ def exporter_dossier(etat, nom_dossier: str) -> bytes:
         donnees[champ] = etat.get(champ) or ""
     for champ in CHAMPS_LISTES:
         donnees[champ] = etat.get(champ) or []
+    for champ in CHAMPS_OBJETS:
+        donnees[champ] = etat.get(champ) or {}
     return json.dumps(donnees, ensure_ascii=False, indent=1).encode("utf-8")
 
 
@@ -58,6 +61,8 @@ def importer_dossier(contenu: bytes) -> dict:
     for champ in CHAMPS_TEXTE:
         etat[champ] = donnees.get(champ) or None
     for champ in CHAMPS_LISTES:
+        etat[champ] = donnees.get(champ) or None
+    for champ in CHAMPS_OBJETS:
         etat[champ] = donnees.get(champ) or None
     etat["fiche_client_txt"] = etat["fiche_client_txt"] or ""
     return {"nom": donnees.get("nom", ""), "enregistre_le": donnees.get("enregistre_le", ""), "etat": etat}

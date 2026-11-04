@@ -33,7 +33,18 @@ OCR_PAGES_MAX = 40   # au-delà, la lecture des scans devient trop longue en lig
 SEUIL_PAGE_VIDE = 50  # caractères en dessous desquels une page est considérée comme scannée
 
 
+def _configurer_tesseract() -> None:
+    """Sur Scalingo, Tesseract est installé dans /app/.apt : on indique où sont les langues."""
+    import glob
+    import os
+    if not os.getenv("TESSDATA_PREFIX"):
+        trouves = sorted(glob.glob("/app/.apt/usr/share/tesseract-ocr/*/tessdata"))
+        if trouves:
+            os.environ["TESSDATA_PREFIX"] = trouves[-1]
+
+
 def ocr_disponible() -> bool:
+    _configurer_tesseract()
     try:
         import pytesseract
         pytesseract.get_tesseract_version()

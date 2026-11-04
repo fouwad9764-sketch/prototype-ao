@@ -111,10 +111,15 @@ Règles :
   - NON CONFORME : le dossier montre que le client ne remplit pas l'exigence
     (ex. « aucune habilitation TST » face à une exigence TST).
   - À VÉRIFIER : l'information est absente du dossier, ou c'est une déclaration ou un
-    engagement que le client doit signer, ou une règle de dépôt à respecter le moment venu.
+    engagement que le client doit signer, ou une règle de dépôt à respecter le moment venu
+    (date et heure limite de remise, mode de dépôt, format des fichiers, signature) :
+    ces règles de dépôt ne sont jamais SANS OBJET.
   - SANS OBJET : simple information sur la procédure, ou exigence qui ne concerne pas un
     candidat seul (ex. règles de groupement pour une candidature individuelle), ou doublon
-    d'une exigence déjà listée (écris alors « doublon du n° X »).
+    d'une exigence déjà listée (écris alors « doublon du n° X »). Une exigence formulée
+    « le cas échéant », « si applicable » ou « en cas de sous-traitance / cotraitance /
+    groupement » est SANS OBJET tant que le dossier du client ne prévoit ni sous-traitant
+    ni cotraitant : ne la classe jamais NON CONFORME pour ce seul motif.
 - Compare les chiffres : un chiffre d'affaires inférieur à un seuil exigé est NON CONFORME ;
   en l'absence de seuil, ne conclus pas.
 - Preuve : élément précis du dossier du client, sinon « aucune ».
