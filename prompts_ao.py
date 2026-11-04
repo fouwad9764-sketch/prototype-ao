@@ -221,7 +221,8 @@ Prépare une FICHE D'AIDE AU REMPLISSAGE des formulaires officiels DC1 (lettre d
 et DC2 (déclaration du candidat individuel ou du membre du groupement), à partir des seules
 informations ci-dessous. Cette fiche sert à recopier les valeurs dans les formulaires officiels.
 
-Format : deux sections Markdown « # DC1 » et « # DC2 », chacune avec UN tableau :
+Format : commence directement par le titre « ## DC1 », sans autre titre avant. Deux sections
+« ## DC1 » et « ## DC2 », chacune avec UN tableau :
 | Rubrique | Champ | Valeur proposée | Source |
 
 Rubriques à couvrir, dans cet ordre :
@@ -243,7 +244,8 @@ Règles :
 - Rubrique sans objet (ex. groupement pour une candidature individuelle) : « Sans objet » et pourquoi.
 - Source : « Fiche flash », « Fiche client », « Matrice » ou « — ».
 - Pour F et G, reprends précisément ce que le DCE exige et ce que le client peut prouver.
-- N'invente aucune donnée (SIRET, adresse, chiffre, référence…).
+- N'invente aucune donnée (SIRET, adresse, chiffre, référence…) et n'étends aucune période :
+  si le client donne 3 années de chiffre d'affaires, écris ces 3 années, pas 5.
 - Termine par une section « ## Points à vérifier avant signature » (5 points maximum).
 
 FICHE FLASH DU MARCHÉ :

@@ -4,7 +4,7 @@ Lancement : streamlit run app.py
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import importlib
 
@@ -27,7 +27,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v10.1 (04/11/2026)"
+VERSION = "v10.2 (04/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -428,9 +428,12 @@ with t_candidature:
                      and (l["Qui"] == "Client" or l["Statut"] == "NON CONFORME")]
         col1, col2 = st.columns(2)
         email_client = col1.text_input("E-mail du client")
-        date_retour = col2.date_input("Date de retour souhaitée", format="DD/MM/YYYY")
-        signature = CONFIG_MAIL["SIGNATURE"] or st.text_input(
-            "Signature", value="Responsable Pôle Marchés Publics\nSola Conseil")
+        jours = [datetime.now().date() + timedelta(days=n) for n in range(1, 22)]
+        jours_fr = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        date_retour = col2.selectbox("Date de retour souhaitée", jours, index=4,
+                                     format_func=lambda d: f"{jours_fr[d.weekday()]} {d:%d/%m/%Y}")
+        signature = CONFIG_MAIL["SIGNATURE"] or st.text_area(
+            "Signature", value="Prénom Nom\nResponsable Pôle Marchés Publics\nSola Conseils", height=100)
         if st.button(f"Rédiger l'e-mail ({len(a_obtenir)} éléments à demander)", disabled=not a_obtenir):
             elements = "\n".join(f"- [{l['Statut']}] {l['Exigence']} → {l['Action']}" for l in a_obtenir)
             with st.spinner("Rédaction…"):
