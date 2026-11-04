@@ -27,7 +27,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v10 (04/11/2026)"
+VERSION = "v10.1 (04/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -35,7 +35,8 @@ load_dotenv()
 BUDGET_FICHE_FLASH = 200_000  # caractères envoyés pour la fiche flash
 BUDGET_CLIENT = 150_000       # caractères du dossier client envoyés à la matrice
 EXIGENCES_PAR_LOT = 25        # exigences envoyées par appel pour la matrice
-ORDRE_PIECES = ["Avis", "RC", "Cadre de réponse", "CCAP", "AE", "CCTP", "DQE", "BPU", "DPGF", "Annexe", "Autre"]
+ORDRE_PIECES = ["Avis", "RC", "Cadre de réponse", "CCAP", "AE", "CCTP", "DQE", "BPU", "DPGF", "Annexe",
+                "Autre", "Plan", "Photo"]
 
 st.set_page_config(page_title="Pôle Marchés Publics — Sola Conseils", page_icon=LOGO, layout="wide")
 
@@ -196,14 +197,15 @@ t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_export = st.tabs(
     ["1. Dossier", "2. Client et go/no-go", "3. Exigences", "4. Matrice", "5. Candidature", "6. Export"])
 
 pieces = st.session_state.pieces
-lisibles = [p for p in (pieces or []) if p.texte.strip()]
+lisibles = [p for p in (pieces or []) if p.texte.strip() and getattr(p, "type", "") not in ("Plan", "Photo")]
 PROFIL = ""
 
 with t_dossier:
     # ---------- 1. Import ----------
     st.subheader("Importer le DCE")
     fichiers = st.file_uploader("Pièces du DCE (PDF, DOCX, XLSX, TXT ou ZIP)", accept_multiple_files=True,
-                                type=["pdf", "docx", "xlsx", "txt", "zip"])
+                                type=["pdf", "docx", "xlsx", "txt", "zip", "jpg", "jpeg", "png", "heic",
+                                      "dwg", "dxf"])
 
     if fichiers and st.button("Lire les fichiers", type="primary"):
         pieces = []
@@ -211,7 +213,7 @@ with t_dossier:
             for f in fichiers:
                 pieces.extend(lire_fichier(f.name, f.getvalue()))
         for p in pieces:
-            p.type = deviner_type(p.nom)
+            p.type = "Plan" if getattr(p, "est_plan", False) else deviner_type(p.nom)
         pieces.sort(key=lambda p: ORDRE_PIECES.index(p.type))
         st.session_state.pieces = pieces
         st.session_state.fiche_flash = st.session_state.go_no_go = st.session_state.exigences = None
@@ -223,7 +225,11 @@ with t_dossier:
             [{"Pièce": p.nom, "Type présumé": p.type, "Caractères": p.nb_caracteres,
               "Alertes": " ; ".join(p.alertes)} for p in pieces],
             use_container_width=True, hide_index=True)
-        lisibles = [p for p in pieces if p.texte.strip()]
+        lisibles = [p for p in pieces if p.texte.strip() and p.type not in ("Plan", "Photo")]
+        a_part = [p for p in pieces if p.type in ("Plan", "Photo")]
+        if a_part:
+            st.info(f"{len(a_part)} plan(s) ou photo(s) mis de côté : non analysés par l'IA, "
+                    "à consulter pour le mémoire technique et le chiffrage.")
         if not lisibles:
             st.error("Aucun texte lisible. Les PDF scannés ne sont pas encore gérés.")
             st.stop()
