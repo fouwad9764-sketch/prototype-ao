@@ -23,17 +23,51 @@ class Piece:
         return len(self.texte)
 
 
+OCR_PAGES_MAX = 40   # au-delà, la lecture des scans devient trop longue en ligne
+SEUIL_PAGE_VIDE = 50  # caractères en dessous desquels une page est considérée comme scannée
+
+
+def ocr_disponible() -> bool:
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
+def _ocr_page(data: bytes, numero: int) -> str:
+    """Reconnaissance du texte d'une page de PDF scannée (français)."""
+    import pytesseract
+    from pdf2image import convert_from_bytes
+    images = convert_from_bytes(data, dpi=200, first_page=numero, last_page=numero)
+    return "\n".join(pytesseract.image_to_string(img, lang="fra") for img in images).strip()
+
+
 def _lire_pdf(data: bytes, nom: str) -> Piece:
     lecteur = PdfReader(io.BytesIO(data))
-    pages = []
+    pages, alertes = [], []
+    pages_scannees = [i for i, page in enumerate(lecteur.pages, start=1)
+                      if len((page.extract_text() or "").strip()) < SEUIL_PAGE_VIDE]
+    ocr_ok = bool(pages_scannees) and ocr_disponible()
+    lues_ocr = 0
     for i, page in enumerate(lecteur.pages, start=1):
         contenu = (page.extract_text() or "").strip()
+        if i in pages_scannees and ocr_ok and lues_ocr < OCR_PAGES_MAX:
+            try:
+                contenu = _ocr_page(data, i) or contenu
+                lues_ocr += 1
+            except Exception as exc:
+                alertes.append(f"Page {i} : lecture du scan impossible ({exc}).")
         pages.append(f"[{nom} — page {i}]\n{contenu}")
-    piece = Piece(nom, "\n\n".join(pages))
-    # Peu de texte par page = probablement un scan (pas d'OCR dans cette version)
-    if lecteur.pages and piece.nb_caracteres / len(lecteur.pages) < 100:
-        piece.alertes.append("PDF probablement scanné : texte quasi absent (OCR non géré en v1).")
-    return piece
+    if pages_scannees:
+        if not ocr_ok:
+            alertes.append(f"{len(pages_scannees)} page(s) scannée(s) non lue(s) : reconnaissance de texte indisponible.")
+        else:
+            alertes.append(f"{lues_ocr} page(s) scannée(s) lue(s) par reconnaissance de texte : à vérifier.")
+            if len(pages_scannees) > OCR_PAGES_MAX:
+                alertes.append(f"Seules les {OCR_PAGES_MAX} premières pages scannées ont été lues.")
+    return Piece(nom, "\n\n".join(pages), alertes)
 
 
 def _lire_docx(data: bytes, nom: str) -> Piece:

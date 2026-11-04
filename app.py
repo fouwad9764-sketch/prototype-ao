@@ -11,10 +11,13 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import export_word, extraction, llm_client, mail_client, matrice, prompts_ao
-for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao):
+import dossier_io, export_word, extraction, llm_client, mail_client, matrice, prompts_ao
+for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
+import time
+
+from dossier_io import exporter_client, exporter_dossier, importer_client, importer_dossier, nom_fichier
 from export_word import markdown_vers_docx
 from extraction import decouper, deviner_type, lire_fichier
 from llm_client import LLMError, appeler_ia, cle_depuis_env
@@ -22,9 +25,9 @@ from mail_client import envoyer, lien_mailto, separer_objet, smtp_configure
 from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_checklist,
                      lignes_de_tableaux, lignes_matrice, vers_excel, vers_markdown)
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
-                        P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT)
+                        P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v9 (03/11/2026)"
+VERSION = "v10 (04/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -104,19 +107,69 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
+    st.divider()
+    st.subheader("Dossiers et clients")
+    st.caption("L'outil oublie tout à la fermeture : sauvegarde ton dossier dans Fichiers, "
+               "puis recharge-le pour reprendre.")
+    nom_dossier = st.text_input("Nom du dossier", key="nom_dossier",
+                                placeholder="ex. EDM réseaux BT - Électro Lagon")
+    st.download_button("Sauvegarder le dossier", use_container_width=True,
+                       data=exporter_dossier(st.session_state, nom_dossier or "dossier"),
+                       file_name=f"dossier_{nom_fichier(nom_dossier)}_{datetime.now():%Y%m%d_%H%M}.json",
+                       mime="application/json")
+    fichier_dossier = st.file_uploader("Reprendre un dossier (.json)", type=["json"], key="up_dossier")
+    if fichier_dossier and st.button("Charger ce dossier", use_container_width=True):
+        try:
+            charge = importer_dossier(fichier_dossier.getvalue())
+            for cle_etat, valeur in charge["etat"].items():
+                st.session_state[cle_etat] = valeur
+            st.session_state.pop("editeur_checklist", None)
+            st.session_state["nom_dossier_charge"] = f"{charge['nom']} (enregistré le {charge['enregistre_le']})"
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+    if st.session_state.get("nom_dossier_charge"):
+        st.success(f"Dossier repris : {st.session_state['nom_dossier_charge']}")
+
+    st.download_button("Sauvegarder la fiche client", use_container_width=True,
+                       data=exporter_client(st.session_state.get("fiche_client_txt", ""),
+                                            st.session_state.get("docs_client")),
+                       file_name="client_" + nom_fichier((st.session_state.get("fiche_client_txt", "").strip()
+                                                          .splitlines() or ["client"])[0]) + ".json",
+                       mime="application/json",
+                       disabled=not st.session_state.get("fiche_client_txt", "").strip())
+    fichier_client = st.file_uploader("Charger une fiche client (.json)", type=["json"], key="up_fiche_client")
+    if fichier_client and st.button("Utiliser cette fiche client", use_container_width=True):
+        try:
+            fiche, docs_c = importer_client(fichier_client.getvalue())
+            st.session_state["fiche_client_txt"] = fiche
+            st.session_state["docs_client"] = docs_c
+            st.session_state["matrice"] = st.session_state["checklist"] = st.session_state["go_no_go"] = None
+            st.session_state.pop("editeur_checklist", None)
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
 st.title("Préparer une réponse à un appel d'offres")
 st.caption("Pôle Marchés Publics — Sola Conseils · Toute sortie est un brouillon à valider avant usage.")
 
 for k in ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "docs_client", "matrice",
-          "checklist", "mail_brouillon", "journal_mails"):
+          "checklist", "mail_brouillon", "journal_mails", "chronos", "dc1_dc2"):
     st.session_state.setdefault(k, None)
 
-def lancer(prompt: str) -> str | None:
+def lancer(prompt: str, etape: str = "Analyse") -> str | None:
+    """Appelle l'IA et chronomètre l'appel (pour mesurer le temps gagné)."""
+    debut = time.time()
     try:
-        return appeler_ia(prompt, cle, modele)
+        reponse = appeler_ia(prompt, cle, modele)
     except LLMError as exc:
         st.error(str(exc))
         return None
+    journal = st.session_state.chronos or []
+    journal.append({"Heure": datetime.now().strftime("%d/%m %H:%M"), "Étape": etape,
+                    "Durée (s)": round(time.time() - debut, 1)})
+    st.session_state.chronos = journal
+    return reponse
 
 
 # ---------- 3. Profil du client ----------
@@ -190,7 +243,7 @@ with t_dossier:
             if total >= BUDGET_FICHE_FLASH:
                 st.info("DCE long : seule la première partie (Avis, RC, CCAP en priorité) a servi à la fiche flash.")
             with st.spinner("Mistral lit le dossier…"):
-                st.session_state.fiche_flash = lancer(P1_FICHE_FLASH.format(documents="\n\n".join(corpus)))
+                st.session_state.fiche_flash = lancer(P1_FICHE_FLASH.format(documents="\n\n".join(corpus)), "Fiche flash")
         if st.session_state.fiche_flash:
             st.markdown(st.session_state.fiche_flash)
 
@@ -228,7 +281,7 @@ with t_client:
             with st.spinner("Analyse en cours…"):
                 st.session_state.go_no_go = lancer(P2_GO_NO_GO.format(
                     fiche_flash=st.session_state.fiche_flash, fiche_client=PROFIL,
-                    date_du_jour=datetime.now().strftime("%d/%m/%Y")))
+                    date_du_jour=datetime.now().strftime("%d/%m/%Y")), "Go/no-go")
         if not PROFIL:
             st.caption("Renseigne d'abord le profil du client (onglet 2).")
         if st.session_state.go_no_go:
@@ -256,7 +309,7 @@ with t_exigences:
                 barre.progress((n - 1) / len(travaux), text=f"{p.nom} — partie {i}/{total}")
                 partie = f", partie {i} sur {total}" if total > 1 else ""
                 sortie = lancer(P3_EXIGENCES.format(nom_piece=p.nom, type_piece=p.type,
-                                                    partie=partie, texte=morceau))
+                                                    partie=partie, texte=morceau), "Extraction des exigences")
                 if sortie is None:
                     break
                 resultats.append(f"## {p.nom}{partie}\n\n{sortie}")
@@ -268,7 +321,7 @@ with t_exigences:
                 st.session_state.matrice = None
                 liste = "\n".join(f"{i}. {c[0]} (source : {c[1]})" for i, c in enumerate(brutes, start=1))
                 with st.spinner(f"Regroupement de {len(brutes)} exigences brutes (doublons, informations)…"):
-                    consolidee = lancer(P3B_CONSOLIDATION.format(exigences=liste))
+                    consolidee = lancer(P3B_CONSOLIDATION.format(exigences=liste), "Regroupement des exigences")
                 st.session_state.exigences = consolidee or "\n\n".join(resultats)
         if st.session_state.exigences:
             nb_final = len(lignes_de_tableaux(st.session_state.exigences))
@@ -307,7 +360,7 @@ with t_matrice:
                     source = cellules[1] if len(cellules) > 1 else ""
                     liste.append(f"{numero}. {exigence} (source : {source})")
                     numero += 1
-                sortie = lancer(P4_MATRICE.format(exigences="\n".join(liste), profil_client=PROFIL))
+                sortie = lancer(P4_MATRICE.format(exigences="\n".join(liste), profil_client=PROFIL), "Matrice")
                 if sortie is None:
                     break
                 sorties.append(sortie)
@@ -377,7 +430,8 @@ with t_candidature:
             with st.spinner("Rédaction…"):
                 texte = lancer(P5_MAIL_CLIENT.format(
                     date_retour=date_retour.strftime("%d/%m/%Y"), signature=signature,
-                    fiche_flash=st.session_state.fiche_flash or "", nom_client=nom_client, elements=elements))
+                    fiche_flash=st.session_state.fiche_flash or "", nom_client=nom_client, elements=elements),
+                    "E-mail client")
             if texte:
                 st.session_state.mail_brouillon = separer_objet(texte)
 
@@ -410,11 +464,48 @@ with t_candidature:
             if st.session_state.journal_mails:
                 st.dataframe(st.session_state.journal_mails, hide_index=True, use_container_width=True)
 
+with t_candidature:
+    if st.session_state.fiche_flash:
+        st.divider()
+        st.subheader("Préparer le DC1 et le DC2")
+        st.caption("Fiche d'aide au remplissage des formulaires officiels (à télécharger sur le site "
+                   "du ministère de l'Économie), ou du DUME. Les cases « [À COMPLÉTER] » restent à remplir.")
+        profil_dc = profil_client()
+        if st.button("Préparer la fiche DC1 / DC2", disabled=not profil_dc):
+            synthese = "\n".join(f"- {l['Exigence']} → {l['Statut']}" for l in (st.session_state.matrice or []))
+            with st.spinner("Préparation des formulaires…"):
+                st.session_state.dc1_dc2 = lancer(P6_DC1_DC2.format(
+                    fiche_flash=st.session_state.fiche_flash, fiche_client=profil_dc,
+                    matrice=synthese or "Matrice non construite."), "DC1 / DC2")
+        if not profil_dc:
+            st.caption("Renseigne d'abord le profil du client (onglet 2).")
+        if st.session_state.dc1_dc2:
+            a_completer = st.session_state.dc1_dc2.count("[À COMPLÉTER")
+            if a_completer:
+                st.warning(f"{a_completer} champ(s) à compléter avec le client.")
+            st.markdown(st.session_state.dc1_dc2)
+            st.download_button("Télécharger la fiche DC1 / DC2 en Word",
+                               data=markdown_vers_docx([("Fiche d'aide au remplissage DC1 / DC2",
+                                                         st.session_state.dc1_dc2)], "Préparation DC1 / DC2"),
+                               file_name=f"preparation_DC1_DC2_{datetime.now():%Y%m%d_%H%M}.docx",
+                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
 with t_export:
+    if st.session_state.chronos:
+        st.subheader("Temps de travail de l'IA sur ce dossier")
+        total = sum(c["Durée (s)"] for c in st.session_state.chronos)
+        c1, c2 = st.columns(2)
+        c1.metric("Temps total de l'IA", f"{total / 60:.1f} min")
+        c2.metric("Appels réalisés", len(st.session_state.chronos))
+        st.caption("Ajoute ton temps de relecture pour obtenir le temps réel du dossier, "
+                   "et compare-le au temps d'une analyse manuelle.")
+        with st.expander("Détail par étape"):
+            st.dataframe(st.session_state.chronos, hide_index=True, use_container_width=True)
+
     # ---------- 8. Export ----------
     sections = [(t, st.session_state[k]) for t, k in [
         ("Fiche flash", "fiche_flash"), ("Analyse go/no-go", "go_no_go"),
-        ("Liste des exigences", "exigences")] if st.session_state[k]]
+        ("Liste des exigences", "exigences"), ("Préparation DC1 / DC2", "dc1_dc2")] if st.session_state[k]]
     if st.session_state.matrice:
         sections.append(("Matrice de conformité", vers_markdown(st.session_state.matrice)))
     if sections:

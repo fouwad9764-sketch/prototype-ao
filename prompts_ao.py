@@ -215,3 +215,43 @@ CLIENT : {nom_client}
 ÉLÉMENTS À OBTENIR (statut, exigence, action) :
 {elements}
 """
+
+P6_DC1_DC2 = """Rôle : assistant administratif du Pôle Marchés Publics de Sola Conseils.
+Prépare une FICHE D'AIDE AU REMPLISSAGE des formulaires officiels DC1 (lettre de candidature)
+et DC2 (déclaration du candidat individuel ou du membre du groupement), à partir des seules
+informations ci-dessous. Cette fiche sert à recopier les valeurs dans les formulaires officiels.
+
+Format : deux sections Markdown « # DC1 » et « # DC2 », chacune avec UN tableau :
+| Rubrique | Champ | Valeur proposée | Source |
+
+Rubriques à couvrir, dans cet ordre :
+DC1 : A Identification de l'acheteur ; B Objet de la consultation ; C Objet de la candidature
+(marché non alloti / tous les lots / lots précis) ; D Présentation du candidat (individuel ou
+groupement) ; E Membres du groupement (si groupement) ; F1 Exclusions (déclaration sur l'honneur) ;
+F2 Documents de preuve disponibles en ligne ; F3 Capacités ; G Désignation du mandataire (si groupement).
+DC2 : A Identification de l'acheteur ; B Objet de la consultation ; C1 Identification du candidat
+(dénomination, adresse, siège, e-mail, téléphone, SIRET, forme juridique, micro/PME) ;
+C2 Cas de marchés réservés ; D Cas spécifiques ; E Aptitude à exercer l'activité ;
+F Capacité économique et financière (ce que demande le DCE, assurance décennale si travaux) ;
+G Capacité technique et professionnelle (ce que demande le DCE : références, effectifs, moyens,
+habilitations) ; H Opérateurs sur lesquels le candidat s'appuie (sous-traitants) ;
+I Marchés de défense ou de sécurité.
+
+Règles :
+- Valeur proposée : uniquement ce qui figure dans les informations fournies. Sinon écris
+  « [À COMPLÉTER] » et précise quoi (ex. « [À COMPLÉTER : SIRET du client] »).
+- Rubrique sans objet (ex. groupement pour une candidature individuelle) : « Sans objet » et pourquoi.
+- Source : « Fiche flash », « Fiche client », « Matrice » ou « — ».
+- Pour F et G, reprends précisément ce que le DCE exige et ce que le client peut prouver.
+- N'invente aucune donnée (SIRET, adresse, chiffre, référence…).
+- Termine par une section « ## Points à vérifier avant signature » (5 points maximum).
+
+FICHE FLASH DU MARCHÉ :
+{fiche_flash}
+
+FICHE CLIENT :
+{fiche_client}
+
+SYNTHÈSE DE LA MATRICE (exigence → statut) :
+{matrice}
+"""
