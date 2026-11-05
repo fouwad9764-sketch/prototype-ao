@@ -11,9 +11,9 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, memoire, prompts_ao, qualification, rendu, stockage
+import controle, devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, memoire, prompts_ao, qualification, relances, rendu, stockage
 for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io, stockage,
-                qualification, devis, memoire, rendu):
+                qualification, devis, memoire, rendu, relances, controle):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
 import hashlib
@@ -40,7 +40,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v13 (05/11/2026)"
+VERSION = "v14.1 (05/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -103,6 +103,11 @@ div[data-testid="stVerticalBlockBorderWrapper"], div[data-testid="stExpander"] d
   font-family: 'Plus Jakarta Sans', sans-serif;}
 .etape.ok {background: #E6F4EA; border-color: #2E9E3E; color: #1E6B2E;}
 .etape .ms {font-size: 1.15rem;}
+.stApp [data-testid="stMarkdownContainer"] table {display: block; max-width: 100%; overflow-x: auto;
+  border-collapse: collapse;}
+.stApp [data-testid="stMarkdownContainer"] td, .stApp [data-testid="stMarkdownContainer"] th {
+  overflow-wrap: anywhere; min-width: 7rem; vertical-align: top;}
+.stApp div[data-testid="stCheckbox"] label p {line-height: 1.35;}
 </style>""", unsafe_allow_html=True)
 
 
@@ -123,6 +128,18 @@ def cartes(elements, petite: bool = False) -> None:
         f'<div><div class="val">{_h(v)}</div><div class="lib">{_h(l)}</div></div></div>'
         for i, l, v, c in elements)
     st.markdown(f'<div class="grille" lang="fr">{html}</div>', unsafe_allow_html=True)
+
+
+def alerte_inventions(texte: str, *autres_sources: str) -> None:
+    """Affiche les dates, années, références ou montants du texte absents de tous les documents."""
+    sources = [p.texte for p in (st.session_state.get("pieces") or [])]
+    sources += [d.texte for d in (st.session_state.get("docs_client") or [])]
+    sources += [st.session_state.get("fiche_client_txt", ""), *autres_sources]
+    absents = controle.elements_absents(texte, sources, ignorer=(datetime.now().strftime("%d/%m/%Y"),))
+    if absents:
+        st.warning("À vérifier : l'IA a écrit des éléments introuvables dans les documents du dossier : "
+                   + ", ".join(f"**{a}**" for a in absents[:12]) + ". Corrige-les ou supprime-les.",
+                   icon=":material/report:")
 
 
 def entete(icone: str, titre: str) -> None:
@@ -154,7 +171,7 @@ def secret(nom: str) -> str:
 CHAMPS_ANALYSE = ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "matrice",
                   "checklist", "mail_brouillon", "journal_mails", "chronos", "dc1_dc2",
                   "type_marche", "devis_lignes", "devis_infos", "memoire_criteres", "memoire_plan",
-                  "memoire_sections", "memoire_notation", "rendu_infos")
+                  "memoire_sections", "memoire_notation", "rendu_infos", "demandes")
 
 
 @st.cache_resource
@@ -254,7 +271,8 @@ st.session_state.setdefault("fiche_client_txt", "")
 def vider_analyse():
     for k in CHAMPS_ANALYSE:
         st.session_state[k] = None
-    st.session_state.pop("editeur_checklist", None)
+    for k in [k for k in st.session_state if str(k).startswith(("chk_", "qui_"))]:
+        del st.session_state[k]
 
 
 def charger_client(client_id: str):
@@ -362,7 +380,8 @@ with st.sidebar:
                 if charge["etat"].get("fiche_client_txt"):
                     st.session_state.fiche_client_txt = charge["etat"]["fiche_client_txt"]
                     st.session_state.docs_client = charge["etat"].get("docs_client")
-                st.session_state.pop("editeur_checklist", None)
+                for k in [k for k in st.session_state if str(k).startswith(("chk_", "qui_"))]:
+                    del st.session_state[k]
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
@@ -478,6 +497,26 @@ def profil_client() -> str:
 CONFIG_MAIL = {k: secret(k) for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
                                        "EXPEDITEUR", "NOM_EXPEDITEUR", "SIGNATURE")}
 
+SIGNATURE_MAIL = CONFIG_MAIL["SIGNATURE"] or f"{UTILISATEUR['nom']}\nPôle Marchés Publics\nSola Conseils"
+
+
+def envoyer_trace(destinataire: str, objet: str, corps: str, copie: str = "", pj=None,
+                  journal: list | None = None) -> bool:
+    """Envoie depuis la boîte du pôle et ajoute l'envoi au journal fourni (ou à celui du dossier ouvert)."""
+    try:
+        envoyer(CONFIG_MAIL, destinataire, objet, corps, copie, pj or [])
+    except Exception as exc:
+        st.error(f"Envoi impossible : {exc}. Vérifie les réglages SMTP dans les Secrets.", icon=":material/error:")
+        return False
+    ligne = {"Date": datetime.now().strftime("%d/%m/%Y %H:%M"), "À": destinataire, "Objet": objet}
+    if journal is None:
+        st.session_state.journal_mails = (st.session_state.journal_mails or []) + [ligne]
+    else:
+        journal.append(ligne)
+    BASE.tracer(QUI, "E-mail envoyé", objet[:60])
+    return True
+
+
 t_accueil, t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_memoire, t_export, t_devis, t_rendu = st.tabs(
     [":material/dashboard: Mes dossiers", ":material/upload_file: Dossier", ":material/thumbs_up_down: Go/no-go",
      ":material/checklist: Exigences", ":material/table_chart: Matrice", ":material/assignment: Candidature",
@@ -496,6 +535,44 @@ with t_accueil:
                                                     ("En analyse", "Go", "En préparation")), ORANGE),
                 ("send", "Déposés", sum(1 for d in tous if d["statut"] == "Déposé"), BLEU),
                 ("emoji_events", "Gagnés", sum(1 for d in tous if d["statut"] == "Gagné"), VERT)])
+        # ---------- Relances à envoyer aujourd'hui (tous dossiers) ----------
+        dues = []
+        for d in tous:
+            try:
+                contenu_d = None if d["id"] == dossier_id else BASE.lire_dossier(d["client_id"], d["id"])
+            except Exception:
+                continue
+            liste_d = st.session_state.demandes if contenu_d is None else contenu_d.get("demandes")
+            for i_dem, dem in enumerate(liste_d or []):
+                if relances.relance_due(dem):
+                    dues.append((d, contenu_d, i_dem, dem))
+        if dues:
+            entete("notifications_active", f"Relances à envoyer aujourd'hui ({len(dues)})")
+            for d, contenu_d, i_dem, dem in dues:
+                rang, _ = relances.prochaine_relance(dem)
+                objet_r, corps_r = relances.texte_relance(dem, rang, SIGNATURE_MAIL)
+                with st.container(border=True):
+                    st.markdown(f"**{d['client']}** · {d['nom']}  \n:material/forward_to_inbox: Relance {rang}/3 à "
+                                f"{dem['destinataire']} · {len(relances.manquants(dem))} pièce(s) manquante(s)")
+                    with st.expander("Voir le message", icon=":material/mail:"):
+                        st.text(f"Objet : {objet_r}\n\n{corps_r}")
+                    if not smtp_configure(CONFIG_MAIL):
+                        st.link_button("Ouvrir dans Mail", icon=":material/mail:",
+                                       url=lien_mailto(dem["destinataire"], objet_r, corps_r))
+                    elif st.button("Envoyer la relance", icon=":material/send:", type="primary",
+                                   key=f"rel_{d['id']}_{dem['id']}"):
+                        if contenu_d is None:
+                            if envoyer_trace(dem["destinataire"], objet_r, corps_r, CONFIG_MAIL["EXPEDITEUR"]):
+                                relances.noter_relance(st.session_state.demandes[i_dem], objet_r)
+                                st.rerun()
+                        else:
+                            journal_d = contenu_d.get("journal_mails") or []
+                            if envoyer_trace(dem["destinataire"], objet_r, corps_r, CONFIG_MAIL["EXPEDITEUR"],
+                                             journal=journal_d):
+                                relances.noter_relance(contenu_d["demandes"][i_dem], objet_r)
+                                contenu_d["journal_mails"] = journal_d
+                                BASE.enregistrer_dossier(d["client_id"], d["id"], contenu_d, QUI)
+                                st.rerun()
         entete("view_list", "Suivi des dossiers")
         tableau = [{"id": d["id"], "Client": d["client"], "Dossier": d["nom"], "Statut": d["statut"],
                     "Date limite": d["date_limite"], "Mis à jour": d["maj_le"][:16], "Par": d["maj_par"]}
@@ -578,6 +655,7 @@ with t_dossier:
             with st.spinner("Mistral lit le dossier…"):
                 st.session_state.fiche_flash = lancer(P1_FICHE_FLASH.format(documents=documents), "Fiche flash")
         if st.session_state.fiche_flash:
+            alerte_inventions(st.session_state.fiche_flash)
             with st.container(border=True):
                 st.markdown(st.session_state.fiche_flash)
 
@@ -692,6 +770,7 @@ with t_client:
         if not PROFIL:
             st.caption(":material/info: Remplis d'abord le profil du client.")
         if st.session_state.go_no_go:
+            alerte_inventions(st.session_state.go_no_go)
             with st.container(border=True):
                 st.markdown(st.session_state.go_no_go)
 
@@ -735,6 +814,7 @@ with t_exigences:
             if st.session_state.exigences_brutes:
                 cartes([("manage_search", "Exigences trouvées", len(st.session_state.exigences_brutes), GRIS),
                         ("filter_alt", "Exigences utiles", nb_final, TURQUOISE)])
+            alerte_inventions(st.session_state.exigences)
             with st.expander("Voir les exigences", expanded=True, icon=":material/list_alt:"):
                 st.markdown(st.session_state.exigences)
 
@@ -777,6 +857,8 @@ with t_matrice:
                 st.session_state.matrice = lignes_matrice("\n\n".join(sorties))
                 st.session_state.checklist = None
                 st.session_state.mail_brouillon = None
+                for k in [k for k in st.session_state if str(k).startswith(("chk_", "qui_"))]:
+                    del st.session_state[k]
                 if len(st.session_state.matrice) != len(exigences_lignes):
                     st.warning(f"{len(st.session_state.matrice)} lignes produites pour "
                                f"{len(exigences_lignes)} exigences : vérifie qu'aucune n'a été oubliée.")
@@ -809,15 +891,23 @@ with t_candidature:
         st.info("Construis d'abord la matrice.", icon=":material/table_chart:")
     if st.session_state.matrice:
         entete("assignment_turned_in", "Check-list de candidature")
-        nom_client = (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]
+        nom_client = (noms_clients.get(client_id) if client_id else "") or \
+            (st.session_state.get("fiche_client_txt", "").strip().splitlines() or [""])[0][:80]
 
         if st.session_state.checklist is None:
             st.session_state.checklist = lignes_checklist(st.session_state.matrice)
-        edite = st.data_editor(st.session_state.checklist, key="editeur_checklist", hide_index=True,
-                               use_container_width=True, disabled=["Priorité", "Exigence", "Statut", "Source DCE"],
-                               column_config={"Fait": st.column_config.CheckboxColumn("Fait"),
-                                              "Qui": st.column_config.SelectboxColumn(
-                                                  "Qui", options=["Client", "Sola Conseil"])})
+        edite = [dict(l) for l in st.session_state.checklist]
+        icones_prio = {"Bloquant": ":red[:material/block:]", "Haute": ":orange[:material/priority_high:]",
+                       "Normale": ":blue[:material/help:]", "Basse": ":green[:material/check_circle:]"}
+        for i_c, l in enumerate(edite):
+            with st.container(border=True):
+                c_ok, c_qui = st.columns([5, 1.3])
+                l["Fait"] = c_ok.checkbox(
+                    f"{icones_prio.get(l['Priorité'], '')} **{l['Exigence']}**  \n"
+                    f":gray[{l['Statut']} · {l['Action']} · {l.get('Source DCE', '')}]",
+                    value=bool(l["Fait"]), key=f"chk_{dossier_id}_{i_c}")
+                l["Qui"] = c_qui.selectbox("Qui", ["Client", "Sola Conseil"], key=f"qui_{dossier_id}_{i_c}",
+                                           index=0 if l["Qui"] == "Client" else 1, label_visibility="collapsed")
         st.session_state.checklist = edite
         faits = sum(1 for l in edite if l["Fait"])
         st.progress(faits / max(len(edite), 1), text=f"{faits} / {len(edite)} éléments traités")
@@ -850,7 +940,10 @@ with t_candidature:
 
         if st.session_state.mail_brouillon:
             objet = st.text_input("Objet", value=st.session_state.mail_brouillon[0])
-            corps = st.text_area("Message (modifiable)", value=st.session_state.mail_brouillon[1], height=320)
+            corps = st.text_area("Message (modifiable)", value=st.session_state.mail_brouillon[1],
+                                 height=min(900, 140 + 26 * len(st.session_state.mail_brouillon[1].splitlines())))
+            alerte_inventions(f"{objet}\n{corps}", st.session_state.fiche_flash or "", signature,
+                              date_retour.strftime("%d/%m/%Y"))
             responsable = CONFIG_MAIL["EXPEDITEUR"]
             copie = responsable if responsable and st.checkbox("Mettre le responsable du pôle en copie", value=True) else ""
             if email_client:
@@ -862,17 +955,21 @@ with t_candidature:
                              disabled=not (relu and email_client and "@" in email_client)):
                     pj = [("checklist_candidature.xlsx", checklist_vers_excel(edite, f"Check-list : {nom_client}"),
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")] if joindre else []
-                    try:
-                        envoyer(CONFIG_MAIL, email_client, objet, corps, copie, pj)
-                        journal = st.session_state.journal_mails or []
-                        journal.append({"Date": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                                        "À": email_client, "Objet": objet})
-                        st.session_state.journal_mails = journal
-                        st.success(f"E-mail envoyé à {email_client}" + (f" (copie : {copie})" if copie else "") + ".")
-                    except Exception as exc:
-                        st.error(f"Envoi impossible : {exc}. Vérifie les réglages SMTP dans les Secrets.")
+                    if envoyer_trace(email_client, objet, corps, copie, pj):
+                        st.session_state.demandes = (st.session_state.demandes or []) + [relances.nouvelle_demande(
+                            email_client, objet, date_retour, [l["Exigence"] for l in a_obtenir],
+                            str((st.session_state.type_marche or {}).get("date_limite") or ""),
+                            (st.session_state.type_marche or {}).get("objet") or nom_client, QUI)]
+                        st.success(f"E-mail envoyé à {email_client}. Demande ajoutée au suivi : les relances "
+                                   "sont planifiées.", icon=":material/check_circle:")
             else:
                 st.caption(":material/info: Envoi direct non configuré : utilise « Ouvrir dans Mail ».")
+            if email_client and st.button("Je l'ai envoyé par Mail : suivre cette demande", icon=":material/add_task:"):
+                st.session_state.demandes = (st.session_state.demandes or []) + [relances.nouvelle_demande(
+                    email_client, objet, date_retour, [l["Exigence"] for l in a_obtenir],
+                    str((st.session_state.type_marche or {}).get("date_limite") or ""),
+                    (st.session_state.type_marche or {}).get("objet") or nom_client, QUI)]
+                st.success("Demande ajoutée au suivi.", icon=":material/check_circle:")
             if st.session_state.journal_mails:
                 st.dataframe(st.session_state.journal_mails, hide_index=True, use_container_width=True)
 
@@ -894,6 +991,7 @@ with t_candidature:
             a_completer = st.session_state.dc1_dc2.count("[À COMPLÉTER")
             if a_completer:
                 st.warning(f"{a_completer} champ(s) à compléter avec le client.", icon=":material/edit:")
+            alerte_inventions(st.session_state.dc1_dc2)
             with st.container(border=True):
                 st.markdown(st.session_state.dc1_dc2)
             st.download_button("Fiche DC1 / DC2 (Word)", icon=":material/download:",
@@ -902,6 +1000,96 @@ with t_candidature:
                                file_name=f"preparation_DC1_DC2_{datetime.now():%Y%m%d_%H%M}.docx",
                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+
+# ---------- Suivi des demandes de pièces et confirmations ----------
+with t_candidature:
+    if dossier_id:
+        st.divider()
+        entete("pending_actions", "Suivi des demandes de pièces")
+        demandes_s = st.session_state.demandes or []
+        if not demandes_s:
+            st.caption(":material/info: Aucune demande suivie. Elle s'ajoute automatiquement à l'envoi de l'e-mail "
+                       "au client, ou manuellement ci-dessous.")
+        for i_s, dem in enumerate(demandes_s):
+            restants = relances.manquants(dem)
+            total = len(dem.get("elements", []))
+            rang, quand = relances.prochaine_relance(dem)
+            etat = ("Complète" if not restants else "Close" if dem.get("close") else
+                    f"Relance {rang}/3 le {relances.jour_fr(quand)}" if rang else "Plus de relance prévue")
+            with st.expander(f"{dem['destinataire']} · retour le {dem['date_retour']} · {total - len(restants)}/{total} reçues",
+                             icon=":material/task_alt:" if not restants else ":material/hourglass_top:",
+                             expanded=bool(restants) and not dem.get("close")):
+                cartes([("inventory", "Pièces reçues", f"{total - len(restants)} / {total}", VERT if not restants else ORANGE),
+                        ("event", "Retour demandé", dem["date_retour"], MARINE),
+                        ("forward_to_inbox", "Relances envoyées", len(dem.get("relances", [])), BLEU),
+                        ("schedule_send", "Prochaine étape", etat, TURQUOISE)], petite=True)
+                tableau_e = st.data_editor(
+                    pd.DataFrame([{"Reçu": e["recu"], "Pièce ou information": e["libelle"]} for e in dem["elements"]]),
+                    key=f"elem_{dossier_id}_{dem['id']}", hide_index=True, use_container_width=True,
+                    disabled=["Pièce ou information"],
+                    column_config={"Reçu": st.column_config.CheckboxColumn("Reçu", width="small")})
+                for e, ligne_e in zip(dem["elements"], tableau_e.to_dict("records")):
+                    e["recu"] = bool(ligne_e["Reçu"])
+                c1, c2, c3 = st.columns(3)
+                if restants and rang and smtp_configure(CONFIG_MAIL):
+                    objet_r, corps_r = relances.texte_relance(dem, rang, SIGNATURE_MAIL)
+                    if c1.button("Relancer maintenant", icon=":material/send:", key=f"rn_{dem['id']}"):
+                        if envoyer_trace(dem["destinataire"], objet_r, corps_r, CONFIG_MAIL["EXPEDITEUR"]):
+                            relances.noter_relance(dem, objet_r)
+                            st.rerun()
+                if not restants and smtp_configure(CONFIG_MAIL) and not dem.get("merci"):
+                    objet_c, corps_c = relances.texte_confirmation_reception(dem, SIGNATURE_MAIL)
+                    if c1.button("Confirmer la réception au client", icon=":material/mark_email_read:",
+                                 type="primary", key=f"ok_{dem['id']}"):
+                        if envoyer_trace(dem["destinataire"], objet_c, corps_c, CONFIG_MAIL["EXPEDITEUR"]):
+                            dem["merci"] = True
+                            st.rerun()
+                if not dem.get("close") and c2.button("Arrêter les relances", icon=":material/notifications_off:",
+                                                      key=f"cl_{dem['id']}"):
+                    dem["close"] = True
+                    st.rerun()
+                if dem.get("relances"):
+                    c3.caption("Relances : " + ", ".join(r["date"] for r in dem["relances"]))
+        st.session_state.demandes = demandes_s or st.session_state.demandes
+
+        with st.expander("Suivre une demande envoyée en dehors de l'application", icon=":material/add_task:"):
+            dest_m = st.text_input("E-mail du client", key=f"dm_dest_{dossier_id}")
+            jours_m = [datetime.now().date() + timedelta(days=n) for n in range(0, 22)]
+            retour_m = st.selectbox("Date de retour demandée", jours_m, index=5, key=f"dm_ret_{dossier_id}",
+                                    format_func=relances.jour_fr)
+            elements_m = st.text_area("Pièces demandées (une par ligne)", key=f"dm_el_{dossier_id}", height=140)
+            if st.button("Ajouter au suivi", icon=":material/add:",
+                         disabled=not (dest_m and "@" in dest_m and elements_m.strip())):
+                tm_m = st.session_state.type_marche or {}
+                st.session_state.demandes = (st.session_state.demandes or []) + [relances.nouvelle_demande(
+                    dest_m, "Demande de pièces", retour_m, elements_m.splitlines(), str(tm_m.get("date_limite") or ""),
+                    tm_m.get("objet") or noms_dossiers.get(dossier_id, "").split(" · ")[0], QUI)]
+                st.success("Demande ajoutée : les relances sont planifiées.", icon=":material/check_circle:")
+
+        entete("outgoing_mail", "Confirmer le dépôt au client")
+        tm_c = st.session_state.type_marche or {}
+        c1, c2 = st.columns(2)
+        quand_c = c1.text_input("Déposé le", placeholder="ex. 13/11/2026 à 15h20", key=f"dep_q_{dossier_id}")
+        accuse_c = c2.text_input("N° d'accusé de réception", key=f"dep_a_{dossier_id}")
+        dest_c = st.text_input("E-mail du client", key=f"dep_d_{dossier_id}",
+                               value=(st.session_state.demandes or [{}])[-1].get("destinataire", ""))
+        if quand_c:
+            objet_d, corps_d = relances.texte_confirmation_depot(
+                tm_c.get("objet") or noms_dossiers.get(dossier_id, "").split(" · ")[0], tm_c.get("acheteur", ""),
+                quand_c, accuse_c, SIGNATURE_MAIL)
+            with st.expander("Voir le message", icon=":material/mail:"):
+                st.text(f"Objet : {objet_d}\n\n{corps_d}")
+            if smtp_configure(CONFIG_MAIL):
+                if st.button("Envoyer la confirmation de dépôt", icon=":material/send:", type="primary",
+                             disabled=not (dest_c and "@" in dest_c)):
+                    if envoyer_trace(dest_c, objet_d, corps_d, CONFIG_MAIL["EXPEDITEUR"]):
+                        ri_c = dict(st.session_state.rendu_infos or {})
+                        ri_c["depot"] = f"{quand_c}" + (f", accusé de réception n° {accuse_c}" if accuse_c else "")
+                        st.session_state.rendu_infos = ri_c
+                        st.session_state[f"rendu_depot_{dossier_id}"] = ri_c["depot"]
+                        st.success("Confirmation envoyée, et ajoutée au compte rendu.", icon=":material/check_circle:")
+            elif dest_c:
+                st.link_button("Ouvrir dans Mail", icon=":material/mail:", url=lien_mailto(dest_c, objet_d, corps_d))
 
 # ---------- Mémoire technique ----------
 BUDGET_MEMOIRE = 120_000  # caractères du DCE envoyés pour chaque partie
@@ -1010,6 +1198,7 @@ with t_memoire:
                 n_ac = compter_a_completer(texte_p)
                 with st.expander(f"{titre_p}" + (f"  ·  {n_ac} à compléter" if n_ac else ""),
                                  icon=":material/article:"):
+                    alerte_inventions(texte_p)
                     st.markdown(texte_p)
                     if sources_p:
                         st.caption(f":material/menu_book: Sources : {sources_p}")

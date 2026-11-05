@@ -195,7 +195,8 @@ P5_MAIL_CLIENT = """Rôle : responsable du Pôle Marchés Publics de Sola Consei
 d'un client. Rédige l'e-mail à envoyer au client pour obtenir ce qui manque.
 
 Format de sortie, en texte simple (pas de Markdown, pas de tableau) :
-- première ligne : « Objet : … » (référence et objet court du marché) ;
+- première ligne : « Objet : … » (référence EXACTE de la consultation telle qu'écrite dans la
+  fiche flash, sinon aucune référence, puis l'objet court du marché) ;
 - puis le corps du message.
 
 Contenu du corps :

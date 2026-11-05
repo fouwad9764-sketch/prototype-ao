@@ -13,7 +13,7 @@ FORMAT = "sola-dossier-ao"
 VERSION_FORMAT = 1
 
 CHAMPS_TEXTE = ["fiche_flash", "go_no_go", "exigences", "fiche_client_txt", "dc1_dc2", "memoire_notation"]
-CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos", "devis_lignes", "memoire_plan"]
+CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos", "devis_lignes", "memoire_plan", "demandes"]
 CHAMPS_OBJETS = ["type_marche", "devis_infos", "memoire_criteres", "memoire_sections", "rendu_infos"]
 
 

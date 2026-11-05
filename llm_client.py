@@ -20,6 +20,11 @@ SYSTEM_PROMPT = (
     "- Pour chaque information tirée d'un document, indique la pièce et l'article ou la page.\n"
     "- Si une information est absente, écris « non trouvé ». N'invente jamais rien.\n"
     "- N'invente aucune capacité, référence ou certification du client.\n"
+    "- Recopie uniquement les dates, années, heures, montants et numéros de référence écrits "
+    "dans les documents, à l'identique. Une période relative (« trois derniers exercices », "
+    "« cinq dernières années ») se recopie telle quelle : ne la convertis jamais en années.\n"
+    "- Ne mélange jamais deux consultations : n'utilise que la date limite et la référence "
+    "du dossier fourni.\n"
     "- Mets en forme en Markdown : titres avec #, listes avec -, tableaux avec |."
 )
 
