@@ -11,11 +11,12 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import controle, devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, memoire, prompts_ao, qualification, relances, rendu, stockage
+import controle, devis, dossier_io, fiche_client, export_word, extraction, llm_client, mail_client, matrice, memoire, prompts_ao, qualification, relances, rendu, stockage
 for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io, stockage,
-                qualification, devis, memoire, rendu, relances, controle):
+                qualification, devis, memoire, rendu, relances, controle, fiche_client):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
+import copy
 import hashlib
 import json
 import time
@@ -40,7 +41,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v14.1 (05/11/2026)"
+VERSION = "v15 (05/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -279,8 +280,15 @@ def charger_client(client_id: str):
     contenu = BASE.lire_client(client_id)
     fiche, docs = importer_client(json.dumps({"format": "sola-fiche-client", "fiche": contenu.get("fiche", ""),
                                               "documents": contenu.get("documents", [])}).encode())
-    st.session_state.fiche_client_txt = fiche
+    structure = contenu.get("structure")
+    if not structure:  # ancienne fiche en texte libre : reprise dans les notes (sauf client fictif de test)
+        structure = fiche_client.structure_vide()
+        if fiche and "Client FICTIF pour test" not in fiche:
+            structure["notes"] = fiche
+    st.session_state.fiche_structure = structure
+    st.session_state.fiche_client_txt = fiche_client.vers_texte(structure)
     st.session_state.docs_client = docs
+    st.session_state.pop("fiche_marqueur", None)
     st.session_state.client_charge = client_id
     st.session_state.empreinte_client = None
 
@@ -464,6 +472,11 @@ if st.session_state.pieces or dossier_id:
 
 def lancer(prompt: str, etape: str = "Analyse") -> str | None:
     """Appelle l'IA et chronomètre l'appel (pour mesurer le temps gagné)."""
+    nom_actif = (noms_clients.get(client_id, "") if client_id else "").lower()
+    if "Client FICTIF pour test" in prompt and not ("fictif" in nom_actif or "test" in nom_actif):
+        st.error("Analyse bloquée : la fiche contient encore le client fictif de test. Vide-la dans l'onglet "
+                 "« Fiche client ».", icon=":material/block:")
+        return None
     debut = time.time()
     try:
         reponse = appeler_ia(prompt, cle, modele)
@@ -517,8 +530,9 @@ def envoyer_trace(destinataire: str, objet: str, corps: str, copie: str = "", pj
     return True
 
 
-t_accueil, t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_memoire, t_export, t_devis, t_rendu = st.tabs(
-    [":material/dashboard: Mes dossiers", ":material/upload_file: Dossier", ":material/thumbs_up_down: Go/no-go",
+t_accueil, t_dossier, t_fiche, t_client, t_exigences, t_matrice, t_candidature, t_memoire, t_export, t_devis, t_rendu = st.tabs(
+    [":material/dashboard: Mes dossiers", ":material/upload_file: Dossier", ":material/badge: Fiche client",
+     ":material/thumbs_up_down: Go/no-go",
      ":material/checklist: Exigences", ":material/table_chart: Matrice", ":material/assignment: Candidature",
      ":material/edit_document: Mémoire", ":material/download: Export", ":material/request_quote: Devis",
      ":material/summarize: Compte rendu"])
@@ -733,28 +747,116 @@ with t_dossier:
                              hide_index=True, use_container_width=True)
                 st.caption("Temps de référence indicatifs, à ajuster après les premiers dossiers.")
 
+
+# ---------- Fiche client structurée ----------
+with t_fiche:
+    if not client_id:
+        st.info("Choisis un client dans le menu de gauche.", icon=":material/apartment:")
+    else:
+        struct = st.session_state.get("fiche_structure") or fiche_client.structure_vide()
+        st.session_state.fiche_structure = struct
+        nom_c = noms_clients.get(client_id, "")
+        marqueur_f = (client_id, st.session_state.get("fiche_version", 0))
+        if st.session_state.get("fiche_marqueur") != marqueur_f:
+            st.session_state.fiche_base = copy.deepcopy(struct)
+            for k in [k for k in st.session_state if str(k).startswith(("fc_", "fct_"))]:
+                del st.session_state[k]
+            st.session_state.fiche_marqueur = marqueur_f
+        base_f = st.session_state.fiche_base
+
+        scores = fiche_client.completude(struct)
+        nature_f = (st.session_state.type_marche or {}).get("nature")
+        prio = fiche_client.PRIORITES.get(nature_f, [])
+        admin_dispo = sum(1 for l in struct.get("administratif", []) if l.get("Disponible"))
+        cartes([("donut_large", "Fiche complète", f"{round(scores['global'] * 100)} %",
+                 VERT if scores["global"] >= .8 else ORANGE if scores["global"] >= .4 else ROUGE),
+                ("workspace_premium", "Références", len([l for l in struct.get("references", []) if l.get("Objet")]), MARINE),
+                ("verified", "Habilitations", len([l for l in struct.get("qualifications", []) if l.get("Intitulé")]), TURQUOISE),
+                ("folder_shared", "Pièces admin.", f"{admin_dispo} / {len(struct.get('administratif', []))}", BLEU)])
+
+        entete("auto_awesome", "Remplir avec l'IA")
+        docs_f = st.file_uploader("Documents du client", accept_multiple_files=True,
+                                  type=["pdf", "docx", "xlsx", "txt"], key=f"up_client_{client_id}",
+                                  help="Kbis, bilans, attestations d'assurance, plaquette, CV, liste de références, "
+                                       "ancien mémoire… L'IA remplit les cases vides, sans écraser ce que tu as saisi.")
+        c1, c2 = st.columns(2)
+        lire_nouveaux = c1.button("Lire et remplir la fiche", icon=":material/auto_awesome:", type="primary",
+                                  disabled=not docs_f, use_container_width=True)
+        relire = c2.button("Relire les documents enregistrés", icon=":material/refresh:",
+                           disabled=not st.session_state.docs_client, use_container_width=True)
+        if lire_nouveaux or relire:
+            documents_c = list(st.session_state.docs_client or [])
+            if lire_nouveaux:
+                with st.spinner("Lecture des documents…"):
+                    deja_lus = {d.nom for d in documents_c}
+                    for f in docs_f:
+                        for p in lire_fichier(f.name, f.getvalue()):
+                            if p.nom not in deja_lus:
+                                documents_c.append(p)
+                st.session_state.docs_client = documents_c
+            texte_c = "\n\n".join(f"===== {d.nom} =====\n{d.texte}" for d in documents_c if d.texte.strip())[:150_000]
+            with st.spinner("Mistral remplit la fiche…"):
+                reponse_c = lancer(fiche_client.P10_EXTRACTION_CLIENT.format(
+                    identite=fiche_client.format_identite_json(), documents=texte_c), "Lecture des documents client")
+            if reponse_c:
+                try:
+                    struct, ajouts = fiche_client.fusionner(struct, fiche_client.depuis_json(reponse_c))
+                    st.session_state.fiche_structure = struct
+                    st.session_state.fiche_version = st.session_state.get("fiche_version", 0) + 1
+                    st.session_state.fiche_message = f"{ajouts} information(s) ajoutée(s) à la fiche. Vérifie-les."
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+        if st.session_state.get("fiche_message"):
+            st.success(st.session_state.pop("fiche_message"), icon=":material/check_circle:")
+        if st.session_state.docs_client:
+            with st.expander(f"Documents enregistrés ({len(st.session_state.docs_client)})", icon=":material/folder:"):
+                for d in st.session_state.docs_client:
+                    st.markdown(f"- {d.nom}" + (f" :orange[({' ; '.join(d.alertes)})]" if d.alertes else ""))
+                if struct.get("sources"):
+                    st.caption(f"Sources utilisées par l'IA : {struct['sources']}")
+
+        if prio:
+            st.info(f"Marché de type « {nature_f} » : sections prioritaires en premier.", icon=":material/priority_high:")
+
+        entete("badge", "Identité")
+        ident = struct.setdefault("identite", {})
+        colonnes_i = st.columns(2)
+        for i_f, champ in enumerate(fiche_client.IDENTITE):
+            cle_i = f"fc_{client_id}_{i_f}"
+            st.session_state.setdefault(cle_i, str(base_f.get("identite", {}).get(champ, "") or ""))
+            ident[champ] = colonnes_i[i_f % 2].text_input(champ, key=cle_i)
+
+        ordre_t = prio + [t for t in fiche_client.TABLEAUX if t not in prio]
+        for nom_t in ordre_t:
+            icone_t, titre_t, colonnes_t = fiche_client.TABLEAUX[nom_t]
+            lignes_t = [l for l in struct.get(nom_t, []) if any(v not in ("", None, False) for v in l.values())]
+            with st.expander(f"{titre_t} ({len(lignes_t)})", icon=f":material/{icone_t}:",
+                             expanded=nom_t in prio[:2] or not lignes_t):
+                config_t = {c: st.column_config.CheckboxColumn(c, default=False)
+                            for c in colonnes_t if c in fiche_client.COLONNES_COCHE}
+                edite_t = st.data_editor(pd.DataFrame(base_f.get(nom_t, []), columns=colonnes_t),
+                                         key=f"fct_{client_id}_{nom_t}", num_rows="dynamic", hide_index=True,
+                                         use_container_width=True, column_config=config_t)
+                remplissage = {c: (False if c in fiche_client.COLONNES_COCHE else "") for c in colonnes_t}
+                struct[nom_t] = [l for l in edite_t.fillna(remplissage).to_dict("records")
+                                 if any(v not in ("", None, False) for v in l.values())]
+
+        cle_n = f"fc_{client_id}_notes"
+        st.session_state.setdefault(cle_n, base_f.get("notes", ""))
+        struct["notes"] = st.text_area("Notes libres (points forts, points faibles, contexte…)", key=cle_n, height=110)
+        st.session_state.fiche_structure = struct
+        st.session_state.fiche_client_txt = fiche_client.vers_texte(struct, nom_c)
+        with st.expander("Ce que l'IA lira pour les analyses", icon=":material/visibility:"):
+            st.text(st.session_state.fiche_client_txt)
+
 with t_client:
     if not pieces:
         st.info("Importe d'abord le DCE (onglet Dossier).", icon=":material/upload_file:")
-    if pieces:
-        entete("apartment", "Profil du client")
-        st.button("Client fictif (test)", icon=":material/science:", on_click=charger_exemple)
-        st.text_area(
-            "Fiche client", key="fiche_client_txt", height=200,
-            placeholder="Nom, activité, chiffre d'affaires des 3 dernières années, effectifs, "
-                        "habilitations et certifications, matériel, assurances, références "
-                        "(acheteur, objet, montant, année), zone d'intervention…")
-        docs = st.file_uploader("Documents du client", help="Facultatif : plaquette, Kbis, attestations, CV, références…",
-                                accept_multiple_files=True, type=["pdf", "docx", "xlsx", "txt"], key="up_client")
-        if docs and st.button("Lire les documents", icon=":material/auto_stories:"):
-            lus = []
-            for f in docs:
-                lus.extend(lire_fichier(f.name, f.getvalue()))
-            st.session_state.docs_client = lus
-        if st.session_state.docs_client:
-            st.dataframe([{"Document client": d.nom, "Caractères": d.nb_caracteres,
-                           "Alertes": " ; ".join(d.alertes)} for d in st.session_state.docs_client],
-                         use_container_width=True, hide_index=True)
+    if pieces and client_id:
+        score_f = fiche_client.completude(st.session_state.get("fiche_structure") or fiche_client.structure_vide())
+        st.info(f"Fiche client complète à {round(score_f['global'] * 100)} % : complète-la dans l'onglet "
+                "« Fiche client » pour un go/no-go fiable.", icon=":material/badge:")
 
 
     PROFIL = profil_client() if pieces else ""
@@ -1442,7 +1544,8 @@ def _empreinte(donnees) -> str:
 if client_id:
     contenu_client = json.loads(exporter_client(st.session_state.get("fiche_client_txt", ""),
                                                 st.session_state.get("docs_client")).decode("utf-8"))
-    contenu_client = {"fiche": contenu_client["fiche"], "documents": contenu_client["documents"]}
+    contenu_client = {"fiche": contenu_client["fiche"], "documents": contenu_client["documents"],
+                      "structure": st.session_state.get("fiche_structure") or fiche_client.structure_vide()}
     empreinte = _empreinte(contenu_client)
     if st.session_state.get("empreinte_client") is None:
         st.session_state.empreinte_client = empreinte

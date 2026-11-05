@@ -83,12 +83,12 @@ def markdown_vers_docx(sections: list, titre: str, note: str | None = NOTE_DEFAU
                 _ajouter_tableau(doc, tampon_tableau)
                 tampon_tableau = []
             brut = ligne.strip()
-            if not brut:
+            if not brut or re.fullmatch(r"[-*_]{3,}", brut):
                 continue
             titre_md = re.match(r"^(#{1,4})\s+(.*)", brut)
             if titre_md:
                 niveau = min(len(titre_md.group(1)) + 1, 4)
-                doc.add_heading(titre_md.group(2).strip("# "), level=niveau)
+                doc.add_heading(titre_md.group(2).strip("# ").replace("**", ""), level=niveau)
             elif re.match(r"^[-*•]\s+", brut):
                 _texte_avec_gras(doc.add_paragraph(style="List Bullet"),
                                  re.sub(r"^[-*•]\s+", "", brut))
