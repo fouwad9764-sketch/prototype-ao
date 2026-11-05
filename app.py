@@ -11,9 +11,9 @@ import importlib
 import streamlit as st
 from dotenv import load_dotenv
 
-import devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, prompts_ao, qualification, stockage
+import devis, dossier_io, export_word, extraction, llm_client, mail_client, matrice, memoire, prompts_ao, qualification, rendu, stockage
 for _module in (export_word, extraction, llm_client, mail_client, matrice, prompts_ao, dossier_io, stockage,
-                qualification, devis):
+                qualification, devis, memoire, rendu):
     importlib.reload(_module)  # toujours la version la plus récente déposée sur GitHub
 
 import hashlib
@@ -24,7 +24,10 @@ from datetime import date
 import pandas as pd
 
 from devis import CATALOGUE_DEFAUT, INFOS_DEFAUT, NIVEAU_VERS_LIGNE, UNITES, est_variable
-from qualification import P7_TYPE_MARCHE, estimer_charge, jours_ouvres_restants, lire_json
+from memoire import (P8A_CRITERES, P8B_SECTION, P8C_NOTATION, compter_a_completer, corpus_memoire,
+                     grille_texte, plan_depuis_criteres, separer_sources)
+from rendu import sections_compte_rendu
+from qualification import P7_TYPE_MARCHE, estimer_charge, jours_ouvres_restants, lire_json, valeur_courte
 from stockage import ROLES, STATUTS_DOSSIER, Base, nouvelle_cle, url_base
 
 from dossier_io import exporter_client, exporter_dossier, importer_client, importer_dossier, nom_fichier
@@ -37,7 +40,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v12.1 (05/11/2026)"
+VERSION = "v13 (05/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -88,9 +91,12 @@ div[data-testid="stVerticalBlockBorderWrapper"], div[data-testid="stExpander"] d
 .carte .ico {width: 2.7rem; height: 2.7rem; border-radius: 12px; display: flex; align-items: center;
   justify-content: center; flex-shrink: 0;}
 .carte .ico .ms {font-size: 1.55rem;}
-.carte .val {font-size: 1.4rem; font-weight: 800; color: #0F2B3A; line-height: 1.15;}
+.carte > div:last-child {min-width: 0;}
+.carte .val {font-size: 1.3rem; font-weight: 800; color: #0F2B3A; line-height: 1.2; overflow-wrap: anywhere;
+  hyphens: auto;}
 .carte .lib {font-size: .82rem; color: #5B6B75; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;}
 .carte.petite .val {font-size: 1rem; font-weight: 700;}
+.carte .note {font-size: .78rem; color: #5B6B75; font-weight: 600;}
 .etapes {display: flex; flex-wrap: wrap; gap: .45rem; margin: .1rem 0 .9rem;}
 .etape {display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .8rem; border-radius: 999px;
   font-weight: 700; font-size: .86rem; border: 1.5px solid #D5DEE3; color: #6B7A83; background: #fff;
@@ -116,7 +122,7 @@ def cartes(elements, petite: bool = False) -> None:
         f'<div class="{classe}"><div class="ico" style="background:{c}1F;color:{c}">{ms(i)}</div>'
         f'<div><div class="val">{_h(v)}</div><div class="lib">{_h(l)}</div></div></div>'
         for i, l, v, c in elements)
-    st.markdown(f'<div class="grille">{html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="grille" lang="fr">{html}</div>', unsafe_allow_html=True)
 
 
 def entete(icone: str, titre: str) -> None:
@@ -147,7 +153,8 @@ def secret(nom: str) -> str:
 # ---------- Base de données sécurisée ----------
 CHAMPS_ANALYSE = ("pieces", "fiche_flash", "go_no_go", "exigences", "exigences_brutes", "matrice",
                   "checklist", "mail_brouillon", "journal_mails", "chronos", "dc1_dc2",
-                  "type_marche", "devis_lignes", "devis_infos")
+                  "type_marche", "devis_lignes", "devis_infos", "memoire_criteres", "memoire_plan",
+                  "memoire_sections", "memoire_notation", "rendu_infos")
 
 
 @st.cache_resource
@@ -377,6 +384,34 @@ with st.sidebar:
             st.markdown("**:material/history: Journal des actions**")
             st.dataframe(BASE.journal(100), hide_index=True, use_container_width=True)
 
+    with st.expander("Signaler une erreur de l'IA", icon=":material/flag:"):
+        etape_err = st.selectbox("Étape", ["Fiche flash", "Type de marché", "Temps de traitement", "Go/no-go",
+                                           "Exigences", "Matrice", "Check-list", "E-mail client", "DC1 / DC2",
+                                           "Devis", "Affichage", "Autre"], key="err_etape")
+        constat = st.text_area("Ce que l'IA a mis", key="err_constat", height=80)
+        correct = st.text_area("Ce qui est juste (avec la page du DCE)", key="err_correct", height=80)
+
+        def signaler_cb():
+            retours = BASE.lire_parametre("retours_fiabilite", []) or []
+            retours.append({"Date": datetime.now().strftime("%d/%m/%Y %H:%M"), "Par": UTILISATEUR["nom"],
+                            "Type de marché": (st.session_state.type_marche or {}).get("nature", ""),
+                            "Étape": st.session_state.err_etape, "Constat": st.session_state.err_constat.strip(),
+                            "Correction": st.session_state.err_correct.strip(), "Version": VERSION})
+            BASE.ecrire_parametre("retours_fiabilite", retours, QUI)
+            st.session_state.err_constat = st.session_state.err_correct = ""
+            st.session_state.err_ok = True
+
+        st.button("Envoyer le signalement", icon=":material/flag:", disabled=not constat.strip(), on_click=signaler_cb)
+        if st.session_state.pop("err_ok", False):
+            st.success("Merci, signalement enregistré.", icon=":material/check:")
+        if UTILISATEUR["role"] == "admin":
+            retours = BASE.lire_parametre("retours_fiabilite", []) or []
+            if retours:
+                st.caption(f"{len(retours)} signalement(s) enregistré(s)")
+                st.download_button("Exporter les signalements", icon=":material/download:",
+                                   data=pd.DataFrame(retours).to_csv(index=False, sep=";").encode("utf-8-sig"),
+                                   file_name=f"signalements_{datetime.now():%Y%m%d}.csv", mime="text/csv")
+
     with st.expander("Mon mot de passe", icon=":material/key:"):
         nouveau_mdp = st.text_input("Nouveau mot de passe", type="password", key="nouveau_mdp")
         if st.button("Changer", icon=":material/lock_reset:"):
@@ -400,7 +435,8 @@ if st.session_state.pieces or dossier_id:
     _etapes = [("upload_file", "DCE", "pieces"), ("bolt", "Fiche flash", "fiche_flash"),
                ("category", "Type", "type_marche"), ("thumbs_up_down", "Go/no-go", "go_no_go"),
                ("checklist", "Exigences", "exigences"), ("table_chart", "Matrice", "matrice"),
-               ("badge", "DC1/DC2", "dc1_dc2"), ("request_quote", "Devis", "devis_infos")]
+               ("badge", "DC1/DC2", "dc1_dc2"), ("edit_document", "Mémoire", "memoire_sections"),
+               ("request_quote", "Devis", "devis_infos"), ("summarize", "Compte rendu", "rendu_infos")]
     st.markdown('<div class="etapes">' + "".join(
         f'<span class="etape{" ok" if st.session_state.get(k) else ""}">'
         f'{ms("check_circle" if st.session_state.get(k) else i)} {t}</span>' for i, t, k in _etapes)
@@ -442,10 +478,11 @@ def profil_client() -> str:
 CONFIG_MAIL = {k: secret(k) for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
                                        "EXPEDITEUR", "NOM_EXPEDITEUR", "SIGNATURE")}
 
-t_accueil, t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_export, t_devis = st.tabs(
+t_accueil, t_dossier, t_client, t_exigences, t_matrice, t_candidature, t_memoire, t_export, t_devis, t_rendu = st.tabs(
     [":material/dashboard: Mes dossiers", ":material/upload_file: Dossier", ":material/thumbs_up_down: Go/no-go",
      ":material/checklist: Exigences", ":material/table_chart: Matrice", ":material/assignment: Candidature",
-     ":material/download: Export", ":material/request_quote: Devis"])
+     ":material/edit_document: Mémoire", ":material/download: Export", ":material/request_quote: Devis",
+     ":material/summarize: Compte rendu"])
 
 with t_accueil:
     tous = BASE.dossiers()
@@ -563,25 +600,35 @@ with t_dossier:
                 st.markdown(f"**{tm['objet']}**" + (f"  \n:gray[{tm['sous_type']}]" if tm.get("sous_type") else ""))
             icones_nature = {"Travaux": "construction", "Fournitures": "inventory_2", "Services": "support_agent",
                              "Prestations intellectuelles": "psychology", "Mixte": "join_inner"}
-            cartes([(icones_nature.get(tm.get("nature"), "category"), "Nature", tm.get("nature"), TURQUOISE),
+            v = lambda cle: valeur_courte(tm.get(cle))
+            date_affichee = v("date_limite")
+            if tm.get("fuseau") and date_affichee != "non trouvé":
+                date_affichee += " · " + str(tm["fuseau"]).replace("heure de ", "")
+            cartes([(icones_nature.get(tm.get("nature"), "category"), "Nature", v("nature"), TURQUOISE),
                     ("gavel", "Procédure", str(tm.get("procedure", "—")).replace("Procédure adaptée (MAPA)", "MAPA"),
                      MARINE),
-                    ("account_tree", "Forme", tm.get("forme"), BLEU),
+                    ("account_tree", "Forme", v("forme"), BLEU),
                     ("view_module", "Lots", tm.get("nb_lots") or 1, ORANGE)])
             poids = tm.get("poids_technique")
-            cartes([("event", "Date limite", tm.get("date_limite"), ROUGE),
-                    ("euro", "Montant estimé", tm.get("montant_estime"), VERT),
-                    ("schedule", "Durée", tm.get("duree"), MARINE),
-                    ("description", "Mémoire technique", tm.get("memoire_technique"), TURQUOISE),
+            cartes([("event", "Date limite", date_affichee, ROUGE),
+                    ("euro", "Montant estimé", v("montant_estime"), VERT),
+                    ("schedule", "Durée", v("duree"), MARINE),
+                    ("description", "Mémoire technique", v("memoire_technique"), TURQUOISE),
                     ("balance", "Poids technique", f"{poids} %" if poids is not None else "non trouvé", TURQUOISE),
-                    ("receipt_long", "Type de prix", tm.get("type_prix"), BLEU),
-                    ("directions_walk", "Visite obligatoire", tm.get("visite_obligatoire"), ORANGE),
-                    ("inventory_2", "Échantillons", tm.get("echantillons"), GRIS),
-                    ("alt_route", "Variantes", tm.get("variantes"), GRIS),
-                    ("handshake", "Négociation", tm.get("negociation"), GRIS)], petite=True)
+                    ("receipt_long", "Type de prix", v("type_prix"), BLEU),
+                    ("directions_walk", "Visite obligatoire", v("visite_obligatoire"), ORANGE),
+                    ("inventory_2", "Échantillons", v("echantillons"), GRIS),
+                    ("alt_route", "Variantes", v("variantes"), GRIS),
+                    ("handshake", "Négociation", v("negociation"), GRIS)], petite=True)
+            if tm.get("heure_paris"):
+                st.caption(f":material/schedule: Soit {tm['heure_paris']} heure de Paris.")
             if tm.get("justification"):
                 with st.expander("Sources", icon=":material/menu_book:"):
                     st.write(tm["justification"])
+                    for cle, libelle in (("date_limite", "Date limite"), ("montant_estime", "Montant"),
+                                         ("duree", "Durée")):
+                        if valeur_courte(tm.get(cle), 10_000) != str(tm.get(cle) or "non trouvé"):
+                            st.caption(f"{libelle} : {tm.get(cle)}")
 
             entete("timer", "Temps de traitement")
             c1, c2 = st.columns(2)
@@ -855,6 +902,148 @@ with t_candidature:
                                file_name=f"preparation_DC1_DC2_{datetime.now():%Y%m%d_%H%M}.docx",
                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+
+# ---------- Mémoire technique ----------
+BUDGET_MEMOIRE = 120_000  # caractères du DCE envoyés pour chaque partie
+
+with t_memoire:
+    if not pieces:
+        st.info("Importe d'abord le DCE (onglet Dossier).", icon=":material/upload_file:")
+    else:
+        entete("rule", "Grille de notation")
+        grille = st.session_state.memoire_criteres
+        if st.button("Lire la grille de notation du RC", icon=":material/rule:",
+                     type="secondary" if grille else "primary"):
+            with st.spinner("Mistral lit les critères de jugement…"):
+                reponse = lancer(P8A_CRITERES.format(documents=corpus_memoire(lisibles, BUDGET_FICHE_FLASH)),
+                                 "Grille de notation")
+            if reponse:
+                try:
+                    grille = lire_json(reponse)
+                    st.session_state.memoire_criteres = grille
+                    st.session_state.memoire_plan = plan_depuis_criteres(grille)
+                    st.session_state.pop("memoire_marqueur", None)
+                except ValueError as exc:
+                    st.error(str(exc))
+        if grille:
+            if not grille.get("criteres"):
+                st.warning("Aucune grille trouvée : complète le plan à la main ci-dessous.", icon=":material/warning:")
+            couleurs = [TURQUOISE, MARINE, ORANGE, BLEU, VERT]
+            cartes([("payments" if c.get("est_prix") else "star", valeur_courte(c.get("intitule"), 40),
+                     f"{c.get('points')} pts" if c.get("points") is not None else "—", couleurs[i % 5])
+                    for i, c in enumerate(grille.get("criteres") or [])])
+            if grille.get("limite_pages"):
+                st.warning(f"Limite : {grille['limite_pages']}", icon=":material/straighten:")
+            if grille.get("cadre_impose"):
+                st.info(f"Cadre de réponse imposé : {grille['cadre_impose']}", icon=":material/assignment:")
+            if grille.get("pieces_offre"):
+                with st.expander("Pièces de l'offre exigées", icon=":material/folder_zip:"):
+                    for piece_offre in grille["pieces_offre"]:
+                        st.markdown(f"- {piece_offre}")
+                    if grille.get("sources"):
+                        st.caption(f"Sources : {grille['sources']}")
+
+        entete("format_list_numbered", "Plan du mémoire")
+        marqueur_m = (client_id, dossier_id, id(grille))
+        if st.session_state.get("memoire_marqueur") != marqueur_m:
+            st.session_state.memoire_plan_base = st.session_state.memoire_plan or []
+            st.session_state.pop("editeur_plan", None)
+            st.session_state.memoire_marqueur = marqueur_m
+        plan_df = st.data_editor(
+            pd.DataFrame(st.session_state.memoire_plan_base, columns=["Titre", "Critère", "Points", "Attendus", "Consigne"]),
+            key="editeur_plan", num_rows="dynamic", hide_index=True, use_container_width=True,
+            column_config={"Points": st.column_config.NumberColumn("Points", width="small"),
+                           "Attendus": st.column_config.TextColumn("Attendus de l'acheteur", width="large"),
+                           "Consigne": st.column_config.TextColumn(
+                               "Ta consigne", help="Ex. : insister sur la proximité, reprendre l'ancien mémoire…")})
+        plan = [l for l in plan_df.fillna("").to_dict("records") if str(l.get("Titre") or "").strip()]
+        st.session_state.memoire_plan = plan
+        st.caption(":material/edit: Plan modifiable : ajoute, renomme ou supprime des parties. "
+                   "Renouvellement : ajoute l'ancien mémoire dans les documents du client.")
+
+        sections_m = dict(st.session_state.memoire_sections or {})
+        if plan:
+            entete("edit_document", "Rédaction")
+            if not PROFIL:
+                st.warning("Profil client vide : les éléments du candidat resteront « À COMPLÉTER ».",
+                           icon=":material/apartment:")
+            objet_m = (st.session_state.type_marche or {}).get("objet") or noms_dossiers.get(dossier_id, "") if client_id else ""
+            c1, c2 = st.columns([1, 1])
+            tout = c1.button("Rédiger tout le mémoire", icon=":material/auto_awesome:", type="primary",
+                             disabled=not plan, use_container_width=True)
+            titres = [l["Titre"] for l in plan]
+            une = c2.selectbox("Ou une seule partie", ["—"] + titres, key="partie_a_rediger")
+            refaire = c2.button("Rédiger cette partie", icon=":material/refresh:", disabled=une == "—",
+                                use_container_width=True)
+            a_faire = plan if tout else [l for l in plan if l["Titre"] == une] if refaire else []
+            if a_faire:
+                documents_m = corpus_memoire(lisibles, BUDGET_MEMOIRE)
+                barre = st.progress(0.0, text="Rédaction…")
+                for n, ligne in enumerate(a_faire, start=1):
+                    barre.progress((n - 1) / len(a_faire), text=f"{ligne['Titre']} ({n}/{len(a_faire)})")
+                    texte_m = lancer(P8B_SECTION.format(
+                        nom_client=noms_clients.get(client_id, "le candidat") if client_id else "le candidat",
+                        objet=objet_m or "voir DCE", titre=ligne["Titre"], critere=ligne.get("Critère") or ligne["Titre"],
+                        points=ligne.get("Points") or "?", attendus=ligne.get("Attendus") or "voir RC",
+                        consigne=ligne.get("Consigne") or "aucune", fiche_client=PROFIL or "Aucun élément fourni.",
+                        documents=documents_m), f"Mémoire : {ligne['Titre'][:40]}")
+                    if texte_m is None:
+                        break
+                    sections_m[ligne["Titre"]] = texte_m
+                    st.session_state.memoire_sections = dict(sections_m)
+                    st.session_state.pop(f"mem_{dossier_id}_{ligne['Titre']}", None)
+                barre.progress(1.0, text="Terminé")
+
+            rediges = [l["Titre"] for l in plan if (sections_m.get(l["Titre"]) or "").strip()]
+            corps_m = {t: separer_sources(sections_m[t]) for t in rediges}
+            a_completer_m = sum(compter_a_completer(corps_m[t][0]) for t in rediges)
+            mots_m = sum(len(corps_m[t][0].split()) for t in rediges)
+            cartes([("task_alt", "Parties rédigées", f"{len(rediges)} / {len(plan)}", VERT if len(rediges) == len(plan) else ORANGE),
+                    ("edit", "À compléter / valider", a_completer_m, ROUGE if a_completer_m else VERT),
+                    ("article", "Mots", mots_m, MARINE),
+                    ("description", "Pages estimées", round(mots_m / 450, 1) if mots_m else 0, TURQUOISE)])
+            for l in plan:
+                titre_p = l["Titre"]
+                if titre_p not in corps_m:
+                    continue
+                texte_p, sources_p = corps_m[titre_p]
+                n_ac = compter_a_completer(texte_p)
+                with st.expander(f"{titre_p}" + (f"  ·  {n_ac} à compléter" if n_ac else ""),
+                                 icon=":material/article:"):
+                    st.markdown(texte_p)
+                    if sources_p:
+                        st.caption(f":material/menu_book: Sources : {sources_p}")
+                    cle_edit = f"mem_{dossier_id}_{titre_p}"
+                    st.session_state.setdefault(cle_edit, texte_p)
+                    nouveau = st.text_area("Modifier le texte", key=cle_edit, height=260)
+                    if nouveau != texte_p:
+                        sections_m[titre_p] = nouveau + (f"\nSOURCES : {sources_p}" if sources_p else "")
+                        st.session_state.memoire_sections = dict(sections_m)
+
+            if rediges:
+                entete("gavel", "Notation à blanc")
+                if st.button("Noter le mémoire comme la commission", icon=":material/gavel:"):
+                    texte_complet = "\n\n".join(f"## {t}\n\n{corps_m[t][0]}" for t in rediges)
+                    with st.spinner("Relecture critique…"):
+                        st.session_state.memoire_notation = lancer(P8C_NOTATION.format(
+                            grille=grille_texte(grille or {}) or "\n".join(
+                                f"- {l['Critère']} : {l.get('Points')} points — {l.get('Attendus')}" for l in plan),
+                            memoire=texte_complet), "Notation à blanc")
+                if st.session_state.memoire_notation:
+                    with st.container(border=True):
+                        st.markdown(st.session_state.memoire_notation)
+
+                entete("download", "Exporter le mémoire")
+                nom_m = noms_clients.get(client_id, "") if client_id else ""
+                st.download_button(
+                    "Mémoire technique (Word)", icon=":material/description:", type="primary",
+                    data=markdown_vers_docx([(t, corps_m[t][0]) for t in rediges], "Mémoire technique",
+                                            note=None, saut_de_page=False,
+                                            sous_titre=f"**{objet_m}**" + (f"\n\nCandidat : **{nom_m}**" if nom_m else "")),
+                    file_name=f"memoire_technique_{nom_fichier(nom_m)}_{datetime.now():%Y%m%d_%H%M}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                st.caption(":material/visibility: Les cases [À COMPLÉTER] sont surlignées en jaune dans le Word.")
+
 with t_export:
     if st.session_state.chronos:
         entete("speed", "Temps de travail de l'IA")
@@ -996,6 +1185,64 @@ with t_devis:
                                mime="application/pdf")
             st.caption(":material/visibility: Relis le devis avant de l'envoyer.")
 
+
+
+# ---------- Compte rendu au client ----------
+with t_rendu:
+    entete("summarize", "Compte rendu au client")
+    if not client_id:
+        st.info("Choisis un client dans le menu de gauche.", icon=":material/apartment:")
+    else:
+        commandees = [l["Prestation"] for l in (st.session_state.devis_lignes or [])
+                      if l.get("Inclure") and str(l.get("Prestation") or "").strip()]
+        options_r = list(dict.fromkeys([l.get("Prestation", "") for l in catalogue] + commandees))
+        options_r = [o for o in options_r if o and "succès" not in o.lower()]
+        prestations_r = st.multiselect("Prestations commandées par le client", options_r,
+                                       default=[p for p in commandees if p in options_r],
+                                       key=f"rendu_prest_{dossier_id}",
+                                       help="Reprises du devis. Le document récapitule les actions de chacune.")
+        ri = st.session_state.rendu_infos or {}
+        champs_r = {"message": ri.get("message", "Vous trouverez ci-dessous le récapitulatif des actions réalisées "
+                                                  "par le Pôle Marchés Publics de Sola Conseils pour votre dossier."),
+                    "depot": ri.get("depot", ""), "suivi": ri.get("suivi", ""), "suite": ri.get("suite", "")}
+        for k, v in champs_r.items():
+            st.session_state.setdefault(f"rendu_{k}_{dossier_id}", v)
+        message_r = st.text_area("Message d'introduction", key=f"rendu_message_{dossier_id}", height=90)
+        depot_r = st.text_input("Dépôt de l'offre", key=f"rendu_depot_{dossier_id}",
+                                placeholder="ex. déposé le 19/11/2026 à 15h20, accusé de réception n° …")
+        suivi_r = ""
+        if any("suivi" in p.lower() for p in prestations_r):
+            suivi_r = st.text_area("Suivi de l'exécution", key=f"rendu_suivi_{dossier_id}", height=90)
+        suite_r = st.text_area("Prochaines étapes", key=f"rendu_suite_{dossier_id}", height=90,
+                               placeholder="ex. résultat attendu début décembre ; préparer la négociation…")
+        st.session_state.rendu_infos = {"message": message_r, "depot": depot_r, "suivi": suivi_r, "suite": suite_r,
+                                        "prestations": prestations_r} if prestations_r else (
+                                        st.session_state.rendu_infos or None)
+        if not prestations_r:
+            st.info("Coche les prestations dans le devis, ou choisis-les ci-dessus.", icon=":material/request_quote:")
+        else:
+            infos_r = {"client": noms_clients.get(client_id, ""),
+                       "dossier": noms_dossiers.get(dossier_id, "").split(" · ")[0] if dossier_id else "",
+                       "date": datetime.now().strftime("%d/%m/%Y"), "auteur": UTILISATEUR["nom"],
+                       "message": message_r, "depot": depot_r, "suivi": suivi_r, "suite": suite_r}
+            sections_r = sections_compte_rendu(st.session_state, prestations_r, infos_r)
+            faites = sum(t.count("✔") for _, t in sections_r)
+            a_venir = sum(t.count("☐") for _, t in sections_r)
+            cartes([("checklist", "Prestations", len(prestations_r), TURQUOISE),
+                    ("task_alt", "Actions réalisées", faites, VERT),
+                    ("pending", "Actions restantes", a_venir, ORANGE if a_venir else GRIS)])
+            with st.expander("Aperçu du compte rendu", icon=":material/visibility:"):
+                for titre_r, texte_r in sections_r:
+                    st.markdown(f"##### {titre_r}")
+                    st.markdown(texte_r)
+            st.download_button(
+                "Compte rendu (Word)", icon=":material/description:", type="primary",
+                data=markdown_vers_docx(sections_r, "Compte rendu de prestation",
+                                        note="Pôle Marchés Publics · Sola Conseils · {date}", logo=LOGO,
+                                        saut_de_page=False, sous_titre=f"**{infos_r['client']}**"),
+                file_name=f"compte_rendu_{nom_fichier(infos_r['client'])}_{datetime.now():%Y%m%d}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            st.caption(":material/visibility: Relis le compte rendu avant de l'envoyer au client.")
 
 # ---------- Enregistrement automatique (chiffré) ----------
 def _empreinte(donnees) -> str:

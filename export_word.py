@@ -5,15 +5,22 @@ import re
 from datetime import date
 
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Cm, Pt
 
 
 def _texte_avec_gras(paragraphe, texte: str) -> None:
-    """Ajoute du texte en gérant le **gras** Markdown."""
+    """Ajoute du texte en gérant le **gras** Markdown et en surlignant les [À COMPLÉTER : …]."""
+    from docx.enum.text import WD_COLOR_INDEX
     for i, morceau in enumerate(re.split(r"\*\*(.+?)\*\*", texte)):
-        if morceau:
-            run = paragraphe.add_run(morceau)
-            run.bold = i % 2 == 1
+        if not morceau:
+            continue
+        for bout in re.split(r"(\[À (?:COMPLÉTER|VALIDER)[^\]]*\])", morceau):
+            if not bout:
+                continue
+            run = paragraphe.add_run(bout)
+            run.bold = i % 2 == 1 or bout.startswith("[À ")
+            if bout.startswith("[À "):
+                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
 
 def _ajouter_tableau(doc, lignes: list) -> None:
@@ -40,22 +47,32 @@ def _ajouter_tableau(doc, lignes: list) -> None:
     doc.add_paragraph()
 
 
-def markdown_vers_docx(sections: list, titre: str) -> bytes:
+NOTE_DEFAUT = ("Document généré le {date} par l'outil d'analyse Sola Conseil. Brouillon à vérifier : "
+               "chaque information doit être contrôlée dans les pièces du DCE avant usage.")
+
+
+def markdown_vers_docx(sections: list, titre: str, note: str | None = NOTE_DEFAUT, logo: str | None = None,
+                       saut_de_page: bool = True, sous_titre: str = "") -> bytes:
     """sections = liste de (titre_section, texte_markdown). Renvoie le fichier Word en octets."""
     doc = Document()
     doc.styles["Normal"].font.name = "Calibri"
-    doc.styles["Normal"].font.size = Pt(10)
-
+    doc.styles["Normal"].font.size = Pt(10.5)
+    if logo:
+        try:
+            doc.add_picture(logo, width=Cm(3))
+        except Exception:
+            pass
     doc.add_heading(titre, level=0)
-    note = doc.add_paragraph(
-        f"Document généré le {date.today().strftime('%d/%m/%Y')} par l'outil d'analyse "
-        "Sola Conseil. Brouillon à vérifier : chaque information doit être contrôlée "
-        "dans les pièces du DCE avant usage."
-    )
-    note.runs[0].italic = True
+    if sous_titre:
+        _texte_avec_gras(doc.add_paragraph(), sous_titre)
+    if note:
+        para = doc.add_paragraph(note.format(date=date.today().strftime('%d/%m/%Y')))
+        for run in para.runs:
+            run.italic = True
 
     for titre_section, texte in sections:
-        doc.add_page_break()
+        if saut_de_page:
+            doc.add_page_break()
         doc.add_heading(titre_section, level=1)
         tampon_tableau = []
         for ligne in texte.splitlines() + [""]:

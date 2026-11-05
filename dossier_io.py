@@ -12,9 +12,9 @@ from extraction import Piece
 FORMAT = "sola-dossier-ao"
 VERSION_FORMAT = 1
 
-CHAMPS_TEXTE = ["fiche_flash", "go_no_go", "exigences", "fiche_client_txt", "dc1_dc2"]
-CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos", "devis_lignes"]
-CHAMPS_OBJETS = ["type_marche", "devis_infos"]
+CHAMPS_TEXTE = ["fiche_flash", "go_no_go", "exigences", "fiche_client_txt", "dc1_dc2", "memoire_notation"]
+CHAMPS_LISTES = ["exigences_brutes", "matrice", "checklist", "journal_mails", "chronos", "devis_lignes", "memoire_plan"]
+CHAMPS_OBJETS = ["type_marche", "devis_infos", "memoire_criteres", "memoire_sections", "rendu_infos"]
 
 
 def _piece_vers_dict(p) -> dict:

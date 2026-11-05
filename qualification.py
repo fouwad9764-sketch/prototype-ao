@@ -25,7 +25,9 @@ Réponds UNIQUEMENT par un objet JSON valide (sans texte autour, sans ```), avec
  "nb_lots": nombre entier (1 si non alloti),
  "montant_estime": "montant indiqué dans le DCE avec sa source, sinon non trouvé",
  "duree": "durée du marché, sinon non trouvé",
- "date_limite": "JJ/MM/AAAA HH:MM (heure de l'acheteur), sinon non trouvé",
+ "date_limite": "JJ/MM/AAAA HH:MM en heure LOCALE de l'acheteur (jamais l'heure de Paris si l'acheteur est outre-mer), sinon non trouvé",
+ "fuseau": "heure locale de l'acheteur, ex. heure de Mayotte, heure de Paris, heure de La Réunion",
+ "heure_paris": "HH:MM heure de Paris si l'avis la donne et qu'elle diffère, sinon vide",
  "memoire_technique": "oui" | "non" | "non trouvé",
  "poids_technique": pourcentage entier de la valeur technique dans les critères, ou null,
  "type_prix": "DPGF" | "BPU/DQE" | "Forfait (acte d'engagement seul)" | "Mixte" | "non trouvé",
@@ -38,6 +40,9 @@ Réponds UNIQUEMENT par un objet JSON valide (sans texte autour, sans ```), avec
 
 Règles :
 - Maîtrise d'œuvre, études, AMO, conseil, OPC, CSPS, contrôle technique = "Prestations intellectuelles".
+- Valeurs COURTES : jamais de nom de fichier, de page ni de source dans les valeurs (ex. "765 169 € HT",
+  "12 mois", "20/11/2026 10:00"). Les sources vont UNIQUEMENT dans "justification".
+- Un montant estimé s'écrit en chiffres avec « € HT » ou « € TTC », sans détail.
 - N'invente rien : une information absente vaut "non trouvé" (ou null pour poids_technique).
 - Si l'avis et le règlement de consultation se contredisent, retiens le règlement et signale-le
   dans "justification".
@@ -64,6 +69,14 @@ def lire_json(texte: str) -> dict:
         return json.loads(texte[debut:fin + 1])
     except json.JSONDecodeError as exc:
         raise ValueError("Réponse de l'IA mal formée. Relance l'identification.") from exc
+
+
+def valeur_courte(valeur, limite: int = 60) -> str:
+    """Nettoie une valeur pour une tuile : retire les sources entre parenthèses et raccourcit."""
+    texte = str(valeur if valeur not in (None, "") else "non trouvé")
+    texte = re.sub(r"\s*\((?=[^()]*(?:\.pdf|\.docx|page|p\.\s?\d|RC|CCAP|CCTP|AE))[^()]*\)", "", texte)
+    texte = re.split(r"\s+[—–]\s+|\s*;\s*", texte)[0].strip()
+    return texte if len(texte) <= limite else texte[:limite - 1].rstrip() + "…"
 
 
 def _oui(valeur) -> bool:

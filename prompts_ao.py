@@ -11,7 +11,8 @@ Tableau à deux colonnes | Rubrique | Information (source) | avec ces lignes :
 - Acheteur
 - Procédure
 - Allotissement et lots
-- Date et heure limite de remise des offres
+- Date et heure limite de remise des offres, en heure LOCALE de l'acheteur (si l'avis donne aussi
+  l'heure de Paris, indique-la entre parenthèses : ex. « 20/11/2026 à 10h00 heure de Mayotte (08h00 heure de Paris) »)
 - Date limite des questions
 - Durée et reconductions
 - Montant estimé ou maximum
