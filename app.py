@@ -27,7 +27,7 @@ import pandas as pd
 from devis import CATALOGUE_DEFAUT, INFOS_DEFAUT, NIVEAU_VERS_LIGNE, UNITES, est_variable
 from memoire import (P8A_CRITERES, P8B_SECTION, P8C_NOTATION, compter_a_completer, corpus_memoire,
                      grille_texte, plan_depuis_criteres, separer_sources)
-from rendu import sections_compte_rendu
+from rendu import P11_SYNTHESE_CLIENT, donnees_synthese, sections_compte_rendu
 from qualification import P7_TYPE_MARCHE, estimer_charge, jours_ouvres_restants, lire_json, valeur_courte
 from stockage import ROLES, STATUTS_DOSSIER, Base, nouvelle_cle, url_base
 
@@ -41,7 +41,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v15 (05/11/2026)"
+VERSION = "v15.1 (06/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -1506,8 +1506,9 @@ with t_rendu:
             suivi_r = st.text_area("Suivi de l'exécution", key=f"rendu_suivi_{dossier_id}", height=90)
         suite_r = st.text_area("Prochaines étapes", key=f"rendu_suite_{dossier_id}", height=90,
                                placeholder="ex. résultat attendu début décembre ; préparer la négociation…")
+        synthese_r = ri.get("synthese", "")
         st.session_state.rendu_infos = {"message": message_r, "depot": depot_r, "suivi": suivi_r, "suite": suite_r,
-                                        "prestations": prestations_r} if prestations_r else (
+                                        "prestations": prestations_r, "synthese": synthese_r} if prestations_r else (
                                         st.session_state.rendu_infos or None)
         if not prestations_r:
             st.info("Coche les prestations dans le devis, ou choisis-les ci-dessus.", icon=":material/request_quote:")
@@ -1516,7 +1517,34 @@ with t_rendu:
                        "dossier": noms_dossiers.get(dossier_id, "").split(" · ")[0] if dossier_id else "",
                        "date": datetime.now().strftime("%d/%m/%Y"), "auteur": UTILISATEUR["nom"],
                        "message": message_r, "depot": depot_r, "suivi": suivi_r, "suite": suite_r}
-            sections_r = sections_compte_rendu(st.session_state, prestations_r, infos_r)
+            entete("auto_awesome", "Synthèse pour le client")
+            if st.button("Rédiger la synthèse pour le client", icon=":material/auto_awesome:",
+                         type="secondary" if synthese_r else "primary"):
+                with st.spinner("Rédaction de la synthèse…"):
+                    texte_s = lancer(P11_SYNTHESE_CLIENT.format(**donnees_synthese(st.session_state, prestations_r,
+                                                                                    infos_r)), "Synthèse client")
+                if texte_s:
+                    st.session_state.rendu_infos = {**st.session_state.rendu_infos, "synthese": texte_s}
+                    st.session_state.pop(f"rendu_synth_{dossier_id}", None)
+                    st.rerun()
+            if synthese_r:
+                cle_s = f"rendu_synth_{dossier_id}"
+                st.session_state.setdefault(cle_s, synthese_r)
+                with st.container(border=True):
+                    st.markdown(st.session_state[cle_s])
+                alerte_inventions(st.session_state[cle_s], st.session_state.fiche_flash or "", depot_r, suite_r)
+                with st.expander("Modifier la synthèse", icon=":material/edit:"):
+                    synthese_r = st.text_area("Synthèse", key=cle_s, height=420, label_visibility="collapsed")
+                st.session_state.rendu_infos = {**st.session_state.rendu_infos, "synthese": synthese_r}
+            else:
+                st.caption(":material/info: Sans synthèse, le compte rendu ne contient que les actions réalisées "
+                           "et l'analyse brute.")
+            infos_r["synthese"] = synthese_r
+            detail_r = st.checkbox("Joindre l'analyse détaillée en annexe (fiche flash, go/no-go, conformité)",
+                                   value=not synthese_r, key=f"rendu_detail_{dossier_id}",
+                                   help="Décoché : le client reçoit la synthèse et la liste des actions, "
+                                        "sans notre analyse interne.")
+            sections_r = sections_compte_rendu(st.session_state, prestations_r, infos_r, detail=detail_r)
             faites = sum(t.count("✔") for _, t in sections_r)
             a_venir = sum(t.count("☐") for _, t in sections_r)
             cartes([("checklist", "Prestations", len(prestations_r), TURQUOISE),

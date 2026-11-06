@@ -27,8 +27,79 @@ def _fait(ok: bool, texte: str) -> str:
     return f"- {'✔' if ok else '☐'} {texte}"
 
 
-def sections_compte_rendu(etat: dict, prestations: list, infos: dict) -> list:
-    """Renvoie une liste de (titre, markdown) pour export Word."""
+P11_SYNTHESE_CLIENT = """Rôle : responsable du Pôle Marchés Publics de Sola Conseils. Rédige la
+SYNTHÈSE destinée au client {client}, en tête de son compte rendu. Il est chef d'entreprise,
+pas juriste : il doit comprendre en deux minutes où en est son dossier et ce qu'il doit faire.
+
+Format Markdown, une page maximum, exactement ces parties :
+### Le marché en bref
+Tableau | Élément | Information | avec : acheteur, objet, type et phase de la procédure (ex. phase
+candidature seulement), date et heure limite (heure locale de l'acheteur), durée et montant si
+connus.
+### Notre recommandation
+Une ligne en gras : « Candidater », « Candidater sous conditions » ou « Ne pas candidater », puis
+2 à 4 raisons courtes, factuelles et formulées positivement pour le client. Si des conditions
+existent, liste-les.
+### Ce qui est prêt
+Liste courte de ce que le pôle a déjà réalisé.
+### Ce que nous attendons de vous
+Liste numérotée des pièces et informations à fournir, avec la date de retour si elle est connue.
+Si rien n'est attendu, écris-le.
+### Prochaines étapes
+3 à 5 étapes datées jusqu'au dépôt (et au-delà si la procédure le prévoit).
+
+Règles :
+- Ton professionnel, clair et bienveillant. Pas de jargon interne : pas de notes sur 5,
+  pas d'« arguments contre », pas de spéculation sur les concurrents ou sur les prix.
+- Recopie les dates, montants et références exactement tels qu'écrits ci-dessous. N'invente
+  rien ; si une information manque, ne la mentionne pas.
+- La recommandation reprend celle de l'analyse go/no-go si elle existe ; sinon écris
+  « Recommandation en cours d'analyse ».
+
+PRESTATIONS : {prestations}
+DATE DU JOUR : {date}
+
+FICHE FLASH DU MARCHÉ :
+{fiche_flash}
+
+ANALYSE GO/NO-GO (interne) :
+{go_no_go}
+
+POINTS À TRAITER (matrice de conformité) :
+{points}
+
+PIÈCES ENCORE ATTENDUES DU CLIENT :
+{attendues}
+
+INFORMATIONS DU RESPONSABLE (dépôt, prochaines étapes) :
+{infos}
+"""
+
+
+def donnees_synthese(etat: dict, prestations: list, infos: dict) -> dict:
+    """Prépare les éléments envoyés à l'IA pour la synthèse client."""
+    matrice = etat.get("matrice") or []
+    points = [f"- {l.get('Exigence', '')} ({l.get('Statut')}) : {l.get('Écart et action', '')}"
+              for l in matrice if l.get("Statut") in ("NON CONFORME", "PARTIEL")]
+    attendues = []
+    for dem in etat.get("demandes") or []:
+        for e in dem.get("elements", []):
+            if not e.get("recu"):
+                attendues.append(f"- {e['libelle']} (retour demandé le {dem.get('date_retour')})")
+    if not attendues:
+        attendues = [f"- {l.get('Exigence', '')}" for l in (etat.get("checklist") or [])
+                     if not l.get("Fait") and l.get("Qui") == "Client"]
+    return {"client": infos.get("client", ""), "prestations": ", ".join(prestations), "date": infos.get("date", ""),
+            "fiche_flash": etat.get("fiche_flash") or "non disponible",
+            "go_no_go": etat.get("go_no_go") or "non réalisée",
+            "points": "\n".join(points) or "aucun", "attendues": "\n".join(attendues) or "aucune",
+            "infos": "\n".join(f"{k} : {v}" for k, v in (("Dépôt", infos.get("depot")),
+                                                         ("Prochaines étapes", infos.get("suite"))) if v) or "aucune"}
+
+
+def sections_compte_rendu(etat: dict, prestations: list, infos: dict, detail: bool = True) -> list:
+    """Renvoie une liste de (titre, markdown) pour export Word.
+    detail=False : uniquement les actions réalisées (l'analyse détaillée n'est pas transmise)."""
     tm = etat.get("type_marche") or {}
     pieces = etat.get("pieces") or []
     matrice = etat.get("matrice") or []
@@ -43,7 +114,14 @@ def sections_compte_rendu(etat: dict, prestations: list, infos: dict) -> list:
                 + (f" ({tm['fuseau']})" if tm.get("fuseau") else ""),
                 f"**Prestations couvertes :** {', '.join(prestations) or '—'}",
                 f"**Compte rendu établi le :** {infos.get('date', '')} par {infos.get('auteur', '')}"]
-    sortie = [("Synthèse", "\n\n".join(synthese) + ("\n\n" + infos["message"] if infos.get("message") else ""))]
+    if infos.get("synthese"):
+        entete_cr = [f"**Client :** {infos.get('client', '')}",
+                     f"**Prestations couvertes :** {', '.join(prestations) or '—'}",
+                     f"**Compte rendu établi le :** {infos.get('date', '')} par {infos.get('auteur', '')}"]
+        sortie = [("Synthèse", "\n\n".join(entete_cr) + ("\n\n" + infos["message"] if infos.get("message") else "")
+                   + "\n\n" + infos["synthese"])]
+    else:
+        sortie = [("Synthèse", "\n\n".join(synthese) + ("\n\n" + infos["message"] if infos.get("message") else ""))]
 
     deja = set()
     for prestation in prestations:
@@ -117,13 +195,13 @@ def sections_compte_rendu(etat: dict, prestations: list, infos: dict) -> list:
                 actions.append(_fait(True, "Prestation réalisée (détail ci-dessous)"))
             deja.add(bloc)
         texte = "**Actions réalisées**\n\n" + "\n".join(dict.fromkeys(actions))
-        if contenu:
+        if contenu and detail:
             texte += "\n\n" + "\n\n".join(contenu)
         sortie.append((prestation, texte))
 
-    if chronos:
+    if chronos and detail:
         sortie.append(("Journal de la démarche", "| Date | Étape |\n|---|---|\n" + "\n".join(
             f"| {c.get('Heure', '')} | {c.get('Étape', '')} |" for c in chronos)))
-    if infos.get("suite"):
+    if infos.get("suite") and not infos.get("synthese"):
         sortie.append(("Prochaines étapes", infos["suite"]))
     return sortie
