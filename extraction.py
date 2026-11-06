@@ -126,6 +126,30 @@ def _lire_xlsx(data: bytes, nom: str) -> Piece:
     return Piece(nom, "\n".join(lignes))
 
 
+def lire_capture(nom: str, data: bytes) -> Piece:
+    """Lit le texte d'une capture d'écran ou d'une photo de document (OCR)."""
+    if not ocr_disponible():
+        return Piece(nom, "", ["Lecture des images indisponible sur ce serveur."])
+    try:
+        import pytesseract
+        from PIL import Image, ImageOps
+        if nom.lower().endswith(".heic"):
+            try:
+                import pillow_heif
+                pillow_heif.register_heif_opener()
+            except ImportError:
+                return Piece(nom, "", ["Format HEIC non lu : fais plutôt une capture d'écran (PNG)."])
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("L")
+        if image.width < 1500:  # agrandir les petites captures améliore la lecture
+            facteur = 1500 / image.width
+            image = image.resize((int(image.width * facteur), int(image.height * facteur)))
+        texte = pytesseract.image_to_string(image, lang="fra").strip()
+    except Exception as exc:
+        return Piece(nom, "", [f"Lecture de l'image impossible : {exc}"])
+    alertes = [] if len(texte) > 30 else ["Peu ou pas de texte reconnu dans l'image."]
+    return Piece(nom, f"[{nom} — texte lu sur l'image]\n{texte}", alertes)
+
+
 def lire_fichier(nom: str, data: bytes) -> list:
     """Renvoie la liste des pièces lues (une archive ZIP peut en contenir plusieurs)."""
     bas = nom.lower()

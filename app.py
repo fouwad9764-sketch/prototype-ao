@@ -33,7 +33,7 @@ from stockage import ROLES, STATUTS_DOSSIER, Base, nouvelle_cle, url_base
 
 from dossier_io import exporter_client, exporter_dossier, importer_client, importer_dossier, nom_fichier
 from export_word import markdown_vers_docx
-from extraction import decouper, deviner_type, lire_fichier
+from extraction import EXT_PHOTOS, Piece, decouper, deviner_type, lire_capture, lire_fichier
 from llm_client import LLMError, appeler_ia, cle_depuis_env
 from mail_client import envoyer, lien_mailto, separer_objet, smtp_configure
 from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_checklist,
@@ -41,7 +41,7 @@ from matrice import (COLONNES_MATRICE, checklist_vers_excel, compter, lignes_che
 from prompts_ao import (EXEMPLE_CLIENT_FICTIF, P1_FICHE_FLASH, P2_GO_NO_GO, P3_EXIGENCES,
                         P3B_CONSOLIDATION, P4_MATRICE, P5_MAIL_CLIENT, P6_DC1_DC2)
 
-VERSION = "v15.1 (06/11/2026)"
+VERSION = "v15.2 (06/11/2026)"
 LOGO = "logo_sola.png"
 
 load_dotenv()
@@ -776,12 +776,16 @@ with t_fiche:
 
         entete("auto_awesome", "Remplir avec l'IA")
         docs_f = st.file_uploader("Documents du client", accept_multiple_files=True,
-                                  type=["pdf", "docx", "xlsx", "txt"], key=f"up_client_{client_id}",
-                                  help="Kbis, bilans, attestations d'assurance, plaquette, CV, liste de références, "
-                                       "ancien mémoire… L'IA remplit les cases vides, sans écraser ce que tu as saisi.")
+                                  type=["pdf", "docx", "xlsx", "txt", "png", "jpg", "jpeg", "heic"],
+                                  key=f"up_client_{client_id}",
+                                  help="Kbis, bilans, attestations d'assurance, plaquette, CV, références, ancien mémoire, "
+                                       "ou captures d'écran (Pappers, Annuaire des entreprises…). L'IA remplit les cases "
+                                       "vides, sans écraser ce que tu as saisi.")
+        texte_colle = st.text_area("Ou colle ici un texte copié (fiche Pappers, e-mail du client…)",
+                                   key=f"colle_{client_id}", height=90)
         c1, c2 = st.columns(2)
         lire_nouveaux = c1.button("Lire et remplir la fiche", icon=":material/auto_awesome:", type="primary",
-                                  disabled=not docs_f, use_container_width=True)
+                                  disabled=not (docs_f or texte_colle.strip()), use_container_width=True)
         relire = c2.button("Relire les documents enregistrés", icon=":material/refresh:",
                            disabled=not st.session_state.docs_client, use_container_width=True)
         if lire_nouveaux or relire:
@@ -789,10 +793,15 @@ with t_fiche:
             if lire_nouveaux:
                 with st.spinner("Lecture des documents…"):
                     deja_lus = {d.nom for d in documents_c}
-                    for f in docs_f:
-                        for p in lire_fichier(f.name, f.getvalue()):
+                    for f in docs_f or []:
+                        lus_f = ([lire_capture(f.name, f.getvalue())] if f.name.lower().endswith(EXT_PHOTOS)
+                                 else lire_fichier(f.name, f.getvalue()))
+                        for p in lus_f:
                             if p.nom not in deja_lus:
                                 documents_c.append(p)
+                    if texte_colle.strip():
+                        documents_c.append(Piece(f"Texte collé le {datetime.now():%d/%m/%Y %H:%M}",
+                                                 texte_colle.strip(), []))
                 st.session_state.docs_client = documents_c
             texte_c = "\n\n".join(f"===== {d.nom} =====\n{d.texte}" for d in documents_c if d.texte.strip())[:150_000]
             with st.spinner("Mistral remplit la fiche…"):
